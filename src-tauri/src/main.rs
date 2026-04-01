@@ -212,7 +212,7 @@ fn main() {
                 #[cfg(not(target_os = "windows"))]
                 {
                     use std::path::Path;
-                    let path = Path::new("/tmp/openai-translator.sock");
+                    let path = Path::new("/tmp/simple-translater.sock");
                     std::fs::remove_file(path).unwrap_or_default();
                     let server = Server::http_unix(path).unwrap();
                     launch_ipc_server(&server);

@@ -20,6 +20,7 @@ import { useSetAtom } from 'jotai'
 
 import { showSettingsAtom } from '@/common/store/setting'
 import { trackEvent } from '@aptabase/tauri'
+import Toaster from '@/common/components/Toaster'
 
 addEventListener('unhandledrejection', (e) => {
     trackEvent('promise_rejected', {
@@ -70,6 +71,7 @@ export function Window(props: IWindowProps) {
             <StyletronProvider value={engine}>
                 <BaseProvider theme={theme}>
                     <InnerWindow {...props} />
+                    <Toaster />
                 </BaseProvider>
             </StyletronProvider>
         </ErrorBoundary>
@@ -77,8 +79,22 @@ export function Window(props: IWindowProps) {
 }
 
 const useStyles = createUseStyles({
+    titlebarBg: (props: IThemedStyleProps) => ({
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: '46px',
+        zIndex: 2147483646,
+        background: props.themeType === 'dark' ? 'rgba(17, 17, 17, 0.72)' : 'rgba(255, 255, 255, 0.88)',
+        // Keep it subtle but solid enough to avoid "see-through" under traffic lights.
+        boxShadow: `0 1px 0 ${props.theme.colors.borderTransparent}`,
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
+        pointerEvents: 'none',
+    }),
     titlebar: () => ({
-        height: '30px',
+        height: '46px',
         background: 'transparent',
         userSelect: 'none',
         display: 'flex',
@@ -200,12 +216,15 @@ export function InnerWindow(props: IWindowProps) {
             style={{
                 position: 'relative',
                 background: backgroundBlur ? 'transparent' : theme.colors.backgroundPrimary,
+                boxSizing: 'border-box',
                 font: '14px/1.6 "Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol","Noto Color Emoji"',
                 letterSpacing: '-0.01em',
                 WebkitFontSmoothing: 'antialiased',
                 MozOsxFontSmoothing: 'grayscale',
                 textRendering: 'optimizeLegibility',
                 minHeight: '100vh',
+                // Leave space for macOS titlebar / traffic lights
+                paddingTop: isMacOS ? '46px' : undefined,
             }}
             onClick={(e) => {
                 // if e.target is a
@@ -219,24 +238,27 @@ export function InnerWindow(props: IWindowProps) {
                 }
             }}
         >
+            {isMacOS && <div className={styles.titlebarBg} />}
             {isMacOS && (
                 <TitlebarContainer windowsTitlebarDisableDarkMode={props.windowsTitlebarDisableDarkMode}>
-                    <div className={styles.titlebarButton} onClick={handlePin}>
-                        <svg xmlns='http://www.w3.org/2000/svg' width='1em' height='1em' viewBox='0 0 28 28'>
-                            {pinned ? (
-                                <path
-                                    fill={svgPathColor}
-                                    fillRule='evenodd'
-                                    d='M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1l1-1v-7H19v-2c-1.66 0-3-1.34-3-3z'
-                                />
-                            ) : (
-                                <path
-                                    fill={svgPathColor}
-                                    d='M14 4v5c0 1.12.37 2.16 1 3H9c.65-.86 1-1.9 1-3V4h4m3-2H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1l1-1v-7H19v-2c-1.66 0-3-1.34-3-3V4h1c.55 0 1-.45 1-1s-.45-1-1-1z'
-                                />
-                            )}
-                        </svg>
-                    </div>
+                    {props.isTranslatorWindow && (
+                        <div className={styles.titlebarButton} onClick={handlePin}>
+                            <svg xmlns='http://www.w3.org/2000/svg' width='1em' height='1em' viewBox='0 0 28 28'>
+                                {pinned ? (
+                                    <path
+                                        fill={svgPathColor}
+                                        fillRule='evenodd'
+                                        d='M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1l1-1v-7H19v-2c-1.66 0-3-1.34-3-3z'
+                                    />
+                                ) : (
+                                    <path
+                                        fill={svgPathColor}
+                                        d='M14 4v5c0 1.12.37 2.16 1 3H9c.65-.86 1-1.9 1-3V4h4m3-2H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1l1-1v-7H19v-2c-1.66 0-3-1.34-3-3V4h1c.55 0 1-.45 1-1s-.45-1-1-1z'
+                                    />
+                                )}
+                            </svg>
+                        </div>
+                    )}
                 </TitlebarContainer>
             )}
             {props.children}

@@ -17,7 +17,7 @@ import { MdReplay } from 'react-icons/md'
 import color from 'color'
 import toast from 'react-hot-toast/headless'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
-import { isTauri } from '../utils'
+import { isMacOS, isTauri } from '../utils'
 
 interface TranslationHistoryProps {
     isOpen: boolean
@@ -548,7 +548,7 @@ export function TranslationHistory(props: TranslationHistoryProps) {
                     className={styles.windowHeader}
                     style={{
                         position: 'fixed',
-                        top: 0,
+                        top: isMacOS ? 46 : 0,
                         left: 0,
                         right: 0,
                         zIndex: 999,
@@ -586,7 +586,7 @@ export function TranslationHistory(props: TranslationHistoryProps) {
                     style={{
                         background: theme.colors.backgroundPrimary,
                         overflowY: 'auto',
-                        paddingTop: 170,
+                        paddingTop: (isMacOS ? 46 : 0) + 170,
                     }}
                 >
                     {bodyContent}

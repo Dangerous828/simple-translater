@@ -134,7 +134,11 @@ export abstract class AbstractOpenAI extends AbstractEngine {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async getBaseRequestBody(modelParam?: string): Promise<Record<string, any>> {
-        const model = modelParam || (await this.getAPIModel())
+        const modelRaw = modelParam ?? (await this.getAPIModel())
+        const model = typeof modelRaw === 'string' ? modelRaw.trim() : ''
+        if (!model) {
+            throw new Error('模型未设置，请先在设置中选择/填写模型名称')
+        }
         const modelLower = model.toLowerCase()
 
         // Use standard parameters for traditional models

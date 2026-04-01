@@ -23,7 +23,7 @@ export const defaultTargetLanguage = 'zh-Hans'
 export const defaultWritingTargetLanguage = 'en'
 export const defaultSelectInputElementsText = true
 export const defaultReadSelectedWordsFromInputElementsText = false
-export const defaulti18n = 'en'
+export const defaulti18n = 'zh-Hans'
 
 export async function getApiKey(): Promise<string> {
     const settings = await getSettings()
@@ -201,6 +201,10 @@ export async function getSettings(): Promise<ISettings> {
     }
     if (!settings.ollamaAPIURL) {
         settings.ollamaAPIURL = 'http://127.0.0.1:11434'
+    }
+    if (!settings.ollamaAPIModel) {
+        // Prefer a modern default; users can override in Settings.
+        settings.ollamaAPIModel = 'llama3.1'
     }
     if (!settings.miniMaxAPIModel) {
         settings.miniMaxAPIModel = 'MiniMax-M2.5'

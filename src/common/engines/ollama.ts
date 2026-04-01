@@ -15,13 +15,15 @@ export class Ollama extends AbstractOpenAI {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     async listModels(apiKey_: string | undefined): Promise<IModel[]> {
         return [
-            { id: 'llama2', name: 'Llama 2' },
+            { id: 'llama3.1', name: 'Llama 3.1' },
+            { id: 'llama3', name: 'Llama 3' },
             { id: 'mistral', name: 'Mistral' },
             { id: 'dolphin-phi', name: 'Dolphin Phi' },
             { id: 'phi', name: 'Phi-2' },
             { id: 'neural-chat', name: 'Neural Chat' },
             { id: 'starling-lm', name: 'Starling' },
             { id: 'codellama', name: 'Code Llama' },
+            { id: 'llama2', name: 'Llama 2' },
             { id: 'llama2-uncensored', name: 'Llama 2 Uncensored' },
             { id: 'llama2:13b', name: 'Llama 2 13B' },
             { id: 'llama2:70b', name: 'Llama 2 70B' },

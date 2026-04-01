@@ -17,6 +17,7 @@ import { isTauri } from '../utils'
 import { commands } from '@/tauri/bindings'
 import type { ISettings } from '../types'
 import { useTheme } from '../hooks/useTheme'
+import { MdArrowBack } from 'react-icons/md'
 
 export interface TranslatorProps {
     uuid: string
@@ -170,60 +171,91 @@ export function Translator(props: TranslatorProps) {
         <StyletronProvider value={props.engine}>
             <BaseProvider theme={theme}>
                 <div style={{ padding: 16, ...(props.containerStyle ?? {}) }}>
-                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12 }}>
-                        <div style={{ flex: 1, display: 'flex', gap: 10 }}>
-                            <div style={{ minWidth: 140 }}>
-                                <Select
-                                    size='compact'
-                                    searchable={false}
-                                    clearable={false}
-                                    value={sourceValue}
-                                    options={[{ id: 'auto', label: t('Auto') }]}
-                                    onChange={() => {}}
-                                />
+                    <div
+                        style={{
+                            position: 'sticky',
+                            // Window already reserves macOS traffic-lights safe area via paddingTop.
+                            top: 0,
+                            zIndex: 50,
+                            margin: '0 -16px 12px -16px',
+                            padding: '12px 16px',
+                            background: theme.colors.backgroundPrimary,
+                            borderBottom: '1px solid rgba(0,0,0,0.08)',
+                            backdropFilter: 'blur(10px)',
+                            WebkitBackdropFilter: 'blur(10px)',
+                        }}
+                        data-tauri-drag-ignore='true'
+                    >
+                        {showSettings ? (
+                            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                                <Button kind='secondary' size='compact' onClick={() => setShowSettings(false)}>
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                        <MdArrowBack size={16} />
+                                        返回
+                                    </span>
+                                </Button>
+                                <div style={{ fontWeight: 700, color: theme.colors.contentPrimary }}>
+                                    {t('Settings')}
+                                </div>
                             </div>
-                            <div style={{ minWidth: 180 }}>
-                                <Select
-                                    size='compact'
-                                    searchable
-                                    clearable={false}
-                                    value={targetValue}
-                                    options={
-                                        targetLanguages.map(([code, name]) => ({
-                                            id: code,
-                                            label: name,
-                                        })) as unknown as Array<{
-                                            id: string
-                                            label: string
-                                        }>
-                                    }
-                                    onChange={(params) => {
-                                        const id = params.value[0]?.id
-                                        if (!id) return
-                                        // persist to settings
-                                        import('../utils')
-                                            .then(({ setSettings }) =>
-                                                setSettings({ defaultTargetLanguage: String(id) as LangCode })
-                                            )
-                                            .catch(console.error)
-                                    }}
-                                />
+                        ) : (
+                            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                                <div style={{ flex: 1, display: 'flex', gap: 10 }}>
+                                    <div style={{ minWidth: 140 }}>
+                                        <Select
+                                            size='compact'
+                                            searchable={false}
+                                            clearable={false}
+                                            value={sourceValue}
+                                            options={[{ id: 'auto', label: t('Auto') }]}
+                                            onChange={() => {}}
+                                        />
+                                    </div>
+                                    <div style={{ minWidth: 180 }}>
+                                        <Select
+                                            size='compact'
+                                            searchable
+                                            clearable={false}
+                                            value={targetValue}
+                                            options={
+                                                targetLanguages.map(([code, name]) => ({
+                                                    id: code,
+                                                    label: name,
+                                                })) as unknown as Array<{
+                                                    id: string
+                                                    label: string
+                                                }>
+                                            }
+                                            onChange={(params) => {
+                                                const id = params.value[0]?.id
+                                                if (!id) return
+                                                // persist to settings
+                                                import('../utils')
+                                                    .then(({ setSettings }) =>
+                                                        setSettings({ defaultTargetLanguage: String(id) as LangCode })
+                                                    )
+                                                    .catch(console.error)
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+
+                                <Button kind='secondary' size='compact' onClick={openHistory}>
+                                    {t('History')}
+                                </Button>
+
+                                <Button kind='secondary' size='compact' onClick={() => setShowSettings((v) => !v)}>
+                                    {t('Settings')}
+                                </Button>
                             </div>
-                        </div>
-
-                        <Button kind='secondary' size='compact' onClick={openHistory}>
-                            {t('History')}
-                        </Button>
-
-                        <Button kind='secondary' size='compact' onClick={() => setShowSettings((v) => !v)}>
-                            {t('Settings')}
-                        </Button>
+                        )}
                     </div>
 
                     {showSettings ? (
                         <div style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 10 }}>
                             <InnerSettings
                                 showFooter
+                                onBack={() => setShowSettings(false)}
                                 onSave={(old) => {
                                     props.onSettingsSave?.(old)
                                 }}

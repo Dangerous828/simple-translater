@@ -290,7 +290,7 @@ pub fn get_translator_window(
                 TRANSLATOR_WIN_NAME,
                 tauri::WebviewUrl::App("src/tauri/index.html".into()),
             )
-            .title("NextAI Translator")
+            .title("Simple Translater")
             .fullscreen(false)
             .inner_size(620.0, 700.0)
             .min_inner_size(540.0, 600.0)
@@ -387,7 +387,7 @@ pub fn get_history_window() -> tauri::WebviewWindow {
                 HISTORY_WIN_NAME,
                 tauri::WebviewUrl::App("src/tauri/index.html".into()),
             )
-            .title("NextAI Translator History")
+            .title("Simple Translater")
             .fullscreen(false)
             .inner_size(760.0, 720.0)
             .min_inner_size(660.0, 600.0)
@@ -422,7 +422,7 @@ pub fn get_settings_window() -> tauri::WebviewWindow {
                 SETTINGS_WIN_NAME,
                 tauri::WebviewUrl::App("src/tauri/index.html".into()),
             )
-            .title("NextAI Translator Settings")
+            .title("Simple Translater")
             .fullscreen(false)
             .inner_size(660.0, 800.0)
             .min_inner_size(660.0, 600.0)

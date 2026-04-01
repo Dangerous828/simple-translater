@@ -38,7 +38,7 @@ export interface IPromotionResponse {
 export async function fetchPromotions(): Promise<IPromotionResponse> {
     try {
         const resp = await fetch(
-            `https://raw.githubusercontent.com/nextai-translator/nextai-translator-configs/main/promotions.json?ts=${Date.now()}`,
+            `https://raw.githubusercontent.com/Dangerous828/simple-translator-configs/main/promotions.json?ts=${Date.now()}`,
             { cache: 'no-cache' }
         )
         if (!resp.ok) {

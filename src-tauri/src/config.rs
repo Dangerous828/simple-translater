@@ -95,7 +95,7 @@ pub fn get_config_content() -> String {
 pub fn get_config_content_by_app(app: &AppHandle) -> Result<String, String> {
     let app_paths = app.path();
     let app_config_dir = app_paths
-        .resolve("xyz.yetone.apps.openai-translator", BaseDirectory::Config)
+        .resolve("com.simple.translater", BaseDirectory::Config)
         .unwrap();
     if !app_config_dir.exists() {
         let old_config_dir = app_paths

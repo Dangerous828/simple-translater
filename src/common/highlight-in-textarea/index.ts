@@ -237,8 +237,11 @@ export class HighlightInTextarea {
 
     getStringRanges(input: any, str: any) {
         const ranges = []
-        const inputLower = input.toLowerCase()
-        const strLower = str.toLowerCase()
+        const inputLower = (typeof input === 'string' ? input : '').toLowerCase()
+        const strLower = (typeof str === 'string' ? str : '').toLowerCase()
+        if (!inputLower || !strLower) {
+            return []
+        }
         let index = 0
         while (((index = inputLower.indexOf(strLower, index)), index !== -1)) {
             if (

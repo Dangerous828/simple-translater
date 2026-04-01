@@ -24,6 +24,7 @@ pub fn remember_active_window() {
     }
 }
 
+#[allow(dead_code)]
 fn describe_window(window: &ActiveWindow) -> String {
     format!(
         "title='{}', app='{}', pid={}, id={}",

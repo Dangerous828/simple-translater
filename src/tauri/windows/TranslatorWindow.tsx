@@ -128,8 +128,8 @@ export function TranslatorWindow() {
                 showSettings={showSettings}
                 autoFocus
                 defaultShowSettings
-                editorRows={10}
-                containerStyle={{ paddingTop: settings.enableBackgroundBlur ? '' : '26px' }}
+                editorRows={8}
+                containerStyle={{ paddingTop: settings.enableBackgroundBlur ? '' : '8px' }}
                 onSettingsSave={onSettingsSave}
                 onSettingsShow={onSettingsShow}
             />
