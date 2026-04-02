@@ -144,7 +144,19 @@ def ensure_node_pnpm() -> None:
             info("PNPM_VERSION not set; you can set it to match repo's pinned pnpm.")
             suggest("Example: PNPM_VERSION=9.1.3 python bootstrap_build_env.py")
     else:
-        warn("corepack not found; pnpm activation may be harder")
+        warn("corepack not found; trying to install it via npm...")
+        if which("npm"):
+            r0 = run(["npm", "i", "-g", "corepack"])
+            if r0.code == 0 and which("corepack"):
+                ok("corepack installed")
+                r1 = run(["corepack", "enable"])
+                if r1.code == 0:
+                    ok("corepack enabled")
+                else:
+                    warn(f"corepack enable failed: {r1.err or r1.out}")
+            else:
+                warn(r0.err or r0.out or "npm install corepack failed")
+        suggest("Fallback: npm i -g pnpm")
 
     if which("pnpm"):
         ok(f"pnpm: {run(['pnpm', '-v']).out}")
