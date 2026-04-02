@@ -23,33 +23,37 @@ function run(cmd, args, opts = {}) {
 }
 
 function curlText(url, headers = {}) {
-    const args = ['-fsSL', '--retry', '3', '--retry-delay', '1']
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simple-translater-curl-'))
+    const outPath = path.join(tmpDir, 'out.txt')
+
+    const args = ['-fsSL', '--retry', '3', '--retry-delay', '1', '-o', outPath]
     for (const [k, v] of Object.entries(headers)) {
         args.push('-H', `${k}: ${v}`)
     }
     args.push(url)
+    // Use -o to avoid spawnSync stdout buffer limits (ENOBUFS on Windows).
     const res = spawnSync('curl', args, { encoding: 'utf8' })
     if (res.error) {
         throw new Error(`curl spawn failed for ${url}\nerror: ${String(res.error)}`)
     }
 
-    const stdout = (res.stdout || '').toString()
     const stderr = (res.stderr || '').toString()
-    const stdoutTrim = stdout.trim()
+    const fileText = fs.existsSync(outPath) ? fs.readFileSync(outPath, 'utf8') : ''
+    const fileTrim = fileText.trim()
 
     // On some Windows setups, curl may be terminated unexpectedly (status=null),
     // but still returns a complete JSON payload. If stdout looks like JSON and
     // stderr is empty, treat it as success to avoid flaky failures.
-    if (res.status === null && stdoutTrim && !stderr.trim()) {
-        const first = stdoutTrim[0]
+    if (res.status === null && fileTrim && !stderr.trim()) {
+        const first = fileTrim[0]
         if (first === '{' || first === '[') {
             console.warn(`[python] curl returned status=null, but stdout looks like JSON; continue`)
-            return stdout
+            return fileText
         }
     }
 
     if (res.status !== 0) {
-        const bodyHint = stdoutTrim ? stdoutTrim.slice(0, 400) + (stdoutTrim.length > 400 ? '…' : '') : ''
+        const bodyHint = fileTrim ? fileTrim.slice(0, 400) + (fileTrim.length > 400 ? '…' : '') : ''
         const codeOrSignal = res.status === null ? `signal=${String(res.signal || 'unknown')}` : String(res.status)
         const msg = [
             `curl failed (${codeOrSignal}) for ${url}`,
@@ -60,7 +64,7 @@ function curlText(url, headers = {}) {
             .join('\n')
         throw new Error(msg)
     }
-    return stdout
+    return fileText
 }
 
 async function fetchTextWithFallback(url, headers = {}) {
