@@ -171,12 +171,26 @@ fn python_bin(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     }
     #[cfg(windows)]
     {
-        let p1 = rt.join("windows").join("python.exe");
-        if p1.exists() {
-            return Ok(p1);
+        let candidates = [
+            rt.join("windows").join("python.exe"),
+            rt.join("windows").join("python").join("python.exe"),
+            rt.join("windows").join("install").join("python.exe"),
+        ];
+        for p in &candidates {
+            if p.exists() {
+                return Ok(p.clone());
+            }
         }
-        let p2 = rt.join("windows").join("python").join("python.exe");
-        Ok(p2)
+        Err(format!(
+            "embedded python not found under {}.\n\
+             Tried:\n  - {}\n  - {}\n  - {}\n\
+             From the repository root run: pnpm setup-python-runtime\n\
+             Then restart dev (pnpm dev-tauri). Ensure src-tauri/resources/py/windows contains python.exe.",
+            rt.display(),
+            candidates[0].display(),
+            candidates[1].display(),
+            candidates[2].display(),
+        ))
     }
 }
 
