@@ -22,6 +22,39 @@ function run(cmd, args, opts = {}) {
     }
 }
 
+function curlText(url, headers = {}) {
+    const args = ['-fsSL', url]
+    for (const [k, v] of Object.entries(headers)) {
+        args.push('-H', `${k}: ${v}`)
+    }
+    const res = spawnSync('curl', args, { encoding: 'utf8' })
+    if (res.status !== 0) {
+        const err = (res.stderr || res.stdout || '').toString().trim()
+        throw new Error(err || `curl failed (${res.status}) for ${url}`)
+    }
+    return (res.stdout || '').toString()
+}
+
+async function fetchTextWithFallback(url, headers = {}) {
+    try {
+        const r = await fetch(url, { headers })
+        if (!r.ok) throw new Error(`http ${r.status}`)
+        return await r.text()
+    } catch (e) {
+        console.warn(`[python] fetch failed, fallback to curl: ${url}`)
+        return curlText(url, headers)
+    }
+}
+
+async function fetchJsonWithFallback(url, headers = {}) {
+    const text = await fetchTextWithFallback(url, headers)
+    try {
+        return JSON.parse(text)
+    } catch {
+        throw new Error(`invalid json from ${url}`)
+    }
+}
+
 function platformTriple() {
     const arch = process.arch
     if (process.platform === 'darwin') {
@@ -48,22 +81,19 @@ async function main() {
 
     console.log(`[python] target=${triple} out=${dir} version=${pyMajorMinor} flavor=${wantFlavor}`)
 
-    const jsonText = await fetch(LATEST_JSON).then((r) => {
-        if (!r.ok) throw new Error(`failed to fetch latest-release.json: ${r.status}`)
-        return r.text()
+    const meta = await fetchJsonWithFallback(LATEST_JSON, {
+        'User-Agent': 'simple-translater-setup',
+        Accept: 'application/json',
     })
-    const meta = JSON.parse(jsonText)
 
     const tag = meta?.tag
     if (typeof tag !== 'string' || !tag) {
         fail('unexpected latest-release.json format: missing tag')
     }
 
-    const release = await fetch(GITHUB_TAG_API(tag), {
-        headers: { Accept: 'application/vnd.github+json' },
-    }).then(async (r) => {
-        if (!r.ok) throw new Error(`failed to fetch github release tag=${tag}: ${r.status}`)
-        return await r.json()
+    const release = await fetchJsonWithFallback(GITHUB_TAG_API(tag), {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'simple-translater-setup',
     })
 
     const assets = release?.assets
