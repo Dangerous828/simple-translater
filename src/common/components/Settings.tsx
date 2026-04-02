@@ -119,6 +119,9 @@ const useStyles = createUseStyles<string, StylesProps>({
         gap: 8,
         marginTop: 12,
     },
+    'hotkeyInputShell': {
+        width: '100%',
+    },
     'label': (p) => ({
         color: p.titleColor,
         fontWeight: 650,
@@ -244,29 +247,35 @@ function HotkeyCaptureInput(props: {
     return (
         <div className={styles.field}>
             <div className={styles.label}>{props.label}</div>
-            <Input
-                inputRef={inputRef}
-                value={props.value}
-                placeholder={props.placeholder}
-                clearOnEscape
-                onFocus={() => setCapturing(true)}
-                onBlur={() => setCapturing(false)}
-                // If the input is already focused, clicking again won't fire onFocus.
-                // Use mouse down to re-enter capture mode for "re-record" UX.
-                onMouseDown={() => setCapturing(true)}
-                onKeyDown={(e) => {
-                    if (!capturing) return
-                    e.preventDefault()
-                    e.stopPropagation()
-                    const normalized = normalizeHotkeyFromEvent(e)
-                    if (normalized === null) return
-                    props.onChange(normalized)
-                    // Exit capture mode after a successful capture so users can click again to re-capture.
-                    setCapturing(false)
-                    inputRef.current?.blur()
+            {/* Base UI Input typings omit onMouseDown; shell handles re-capture click. */}
+            <div
+                className={styles.hotkeyInputShell}
+                onMouseDown={() => {
+                    setCapturing(true)
+                    inputRef.current?.focus()
                 }}
-                onChange={(e) => props.onChange((e.target as HTMLInputElement).value)}
-            />
+            >
+                <Input
+                    inputRef={inputRef}
+                    value={props.value}
+                    placeholder={props.placeholder}
+                    clearOnEscape
+                    onFocus={() => setCapturing(true)}
+                    onBlur={() => setCapturing(false)}
+                    onKeyDown={(e) => {
+                        if (!capturing) return
+                        e.preventDefault()
+                        e.stopPropagation()
+                        const normalized = normalizeHotkeyFromEvent(e)
+                        if (normalized === null) return
+                        props.onChange(normalized)
+                        // Exit capture mode after a successful capture so users can click again to re-capture.
+                        setCapturing(false)
+                        inputRef.current?.blur()
+                    }}
+                    onChange={(e) => props.onChange((e.target as HTMLInputElement).value)}
+                />
+            </div>
             <div className={styles.help}>
                 {capturing ? t('Please press the hotkey you want to set.') : t('Click above to set hotkeys.')}
                 {props.help ? <div style={{ marginTop: 4 }}>{props.help}</div> : null}

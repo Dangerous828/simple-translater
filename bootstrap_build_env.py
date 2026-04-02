@@ -15,6 +15,9 @@ What it sets up for *developer/build machines*:
 
 It does NOT modify project files. It may invoke system installers and can require admin privileges,
 especially on Windows.
+
+Windows: VS Build Tools are not auto-installed via winget by default (can appear hung for hours if
+the Visual Studio Installer waits in the background). Set BOOTSTRAP_WINGET_VS=1 to opt in.
 """
 
 from __future__ import annotations
@@ -39,12 +42,22 @@ def run(cmd: list[str], check: bool = False) -> CmdResult:
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, shell=False)
     except FileNotFoundError as e:
-        # Common on Windows when an executable is not actually on PATH
+        # Common on Windows when an executable is not really on PATH
         # (or PATH changes between checks). Treat as a non-fatal command failure.
         return CmdResult(127, "", str(e))
     if check and p.returncode != 0:
         raise RuntimeError(f"Command failed: {cmd}\n{p.stdout}\n{p.stderr}")
     return CmdResult(p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip())
+
+
+def run_live(cmd: list[str]) -> int:
+    """Run with inherited stdio so progress is visible (e.g. large winget installs)."""
+    try:
+        p = subprocess.run(cmd, shell=False)
+        return int(p.returncode or 0)
+    except FileNotFoundError as e:
+        warn(str(e))
+        return 127
 
 
 def which(exe: str) -> Optional[str]:
@@ -208,23 +221,58 @@ def ensure_windows_build_tools() -> None:
     if not is_windows():
         return
     header("Windows: MSVC Build Tools / WebView2")
+    info(
+        "VS Build Tools is several GB and often opens the Visual Studio Installer GUI. "
+        "The bootstrap script does NOT auto-run winget for this by default (avoids silent hangs)."
+    )
+    suggest("Manual (recommended): open https://visualstudio.microsoft.com/downloads/")
+    suggest("  -> Tools for Visual Studio -> Build Tools for Visual Studio 2022")
+    suggest("  -> install workload: Desktop development with C++ (includes MSVC + Windows SDK)")
     if which("winget"):
-        info("winget detected")
-        suggest("Auto-install Visual Studio Build Tools 2022:")
-        suggest("  winget install --id Microsoft.VisualStudio.2022.BuildTools -e")
-        info("Attempting to install VS Build Tools via winget...")
-        r = run(["winget", "install", "--id", "Microsoft.VisualStudio.2022.BuildTools", "-e"])
-        if r.code != 0:
-            warn(r.err or r.out or "winget install failed (try running as admin)")
-
-        warn("After install, open 'Visual Studio Installer' and ensure workloads:")
-        suggest("- Desktop development with C++")
-        suggest("- Windows 10/11 SDK")
+        suggest("Or in an elevated PowerShell:")
+        suggest(
+            "  winget install --id Microsoft.VisualStudio.2022.BuildTools -e "
+            "--accept-package-agreements --accept-source-agreements"
+        )
+        suggest(
+            "If the installer window is hidden, check taskbar / Alt+Tab; accept UAC and workloads."
+        )
+        auto = os.environ.get("BOOTSTRAP_WINGET_VS", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if auto:
+            warn(
+                "BOOTSTRAP_WINGET_VS=1: running winget now (output below; may take 30–60+ min)..."
+            )
+            code = run_live(
+                [
+                    "winget",
+                    "install",
+                    "--id",
+                    "Microsoft.VisualStudio.2022.BuildTools",
+                    "-e",
+                    "--accept-package-agreements",
+                    "--accept-source-agreements",
+                ]
+            )
+            if code != 0:
+                warn(f"winget exited with code {code} (try admin PowerShell or manual installer)")
+        else:
+            info(
+                "To let this script run winget for you, set BOOTSTRAP_WINGET_VS=1 and re-run "
+                "(PowerShell: $env:BOOTSTRAP_WINGET_VS='1'; python bootstrap_build_env.py)"
+            )
     else:
-        warn("winget not detected")
-        suggest("Install Visual Studio Build Tools 2022: https://visualstudio.microsoft.com/downloads/")
+        warn("winget not detected; use the manual download link above.")
 
-    suggest("Ensure WebView2 Runtime installed: https://developer.microsoft.com/microsoft-edge/webview2/")
+    warn("After install, open 'Visual Studio Installer' and ensure workloads:")
+    suggest("- Desktop development with C++")
+    suggest("- Windows 10/11 SDK")
+
+    suggest("Ensure WebView2 Runtime: https://developer.microsoft.com/microsoft-edge/webview2/")
+    suggest("Rust (required for Tauri): https://rustup.rs/ then restart the terminal")
 
 
 def project_next_steps() -> None:
