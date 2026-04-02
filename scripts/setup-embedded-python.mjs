@@ -23,14 +23,23 @@ function run(cmd, args, opts = {}) {
 }
 
 function curlText(url, headers = {}) {
-    const args = ['-fsSL', url]
+    const args = ['-fsSL', '--retry', '3', '--retry-delay', '1', url]
     for (const [k, v] of Object.entries(headers)) {
         args.push('-H', `${k}: ${v}`)
     }
     const res = spawnSync('curl', args, { encoding: 'utf8' })
     if (res.status !== 0) {
-        const err = (res.stderr || res.stdout || '').toString().trim()
-        throw new Error(err || `curl failed (${res.status}) for ${url}`)
+        const stderr = (res.stderr || '').toString().trim()
+        const stdout = (res.stdout || '').toString().trim()
+        const bodyHint = stdout ? stdout.slice(0, 400) + (stdout.length > 400 ? '…' : '') : ''
+        const msg = [
+            `curl failed (${res.status}) for ${url}`,
+            stderr ? `stderr: ${stderr}` : '',
+            bodyHint ? `body(head): ${bodyHint}` : '',
+        ]
+            .filter(Boolean)
+            .join('\n')
+        throw new Error(msg)
     }
     return (res.stdout || '').toString()
 }
@@ -51,7 +60,8 @@ async function fetchJsonWithFallback(url, headers = {}) {
     try {
         return JSON.parse(text)
     } catch {
-        throw new Error(`invalid json from ${url}`)
+        const head = text.slice(0, 400) + (text.length > 400 ? '…' : '')
+        throw new Error(`invalid json from ${url}\nbody(head): ${head}`)
     }
 }
 
