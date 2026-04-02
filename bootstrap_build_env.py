@@ -36,7 +36,12 @@ class CmdResult:
 
 
 def run(cmd: list[str], check: bool = False) -> CmdResult:
-    p = subprocess.run(cmd, capture_output=True, text=True, shell=False)
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, shell=False)
+    except FileNotFoundError as e:
+        # Common on Windows when an executable is not actually on PATH
+        # (or PATH changes between checks). Treat as a non-fatal command failure.
+        return CmdResult(127, "", str(e))
     if check and p.returncode != 0:
         raise RuntimeError(f"Command failed: {cmd}\n{p.stdout}\n{p.stderr}")
     return CmdResult(p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip())
@@ -126,12 +131,19 @@ def ensure_node_pnpm() -> None:
 
     ok(f"node: {run(['node', '-v']).out}")
 
-    if which("corepack"):
+    def try_enable_corepack() -> bool:
         r = run(["corepack", "enable"])
         if r.code == 0:
             ok("corepack enabled")
-        else:
-            warn(f"corepack enable failed: {r.err or r.out}")
+            return True
+        # If the executable cannot be launched (127), treat as "missing".
+        if r.code == 127:
+            warn(f"corepack not runnable: {r.err or r.out}")
+            return False
+        warn(f"corepack enable failed: {r.err or r.out}")
+        return True
+
+    if which("corepack") and try_enable_corepack():
 
         desired = os.environ.get("PNPM_VERSION", "").strip()
         if desired:
@@ -149,11 +161,8 @@ def ensure_node_pnpm() -> None:
             r0 = run(["npm", "i", "-g", "corepack"])
             if r0.code == 0 and which("corepack"):
                 ok("corepack installed")
-                r1 = run(["corepack", "enable"])
-                if r1.code == 0:
-                    ok("corepack enabled")
-                else:
-                    warn(f"corepack enable failed: {r1.err or r1.out}")
+                if not try_enable_corepack():
+                    warn("corepack still not runnable after install")
             else:
                 warn(r0.err or r0.out or "npm install corepack failed")
         suggest("Fallback: npm i -g pnpm")
