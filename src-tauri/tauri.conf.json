@@ -46,7 +46,8 @@
       "signingIdentity": null
     },
     "resources": [
-      "resources/*"
+      "resources/*",
+      "resources/**/*"
     ],
     "shortDescription": "",
     "targets": ["deb", "appimage", "nsis", "app", "dmg"],

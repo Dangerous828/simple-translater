@@ -10,7 +10,7 @@ import { OPENAI_CHAT_COMPLETIONS_API_PATH, OPENAI_PREFERRED_DEFAULT_MODEL } from
 
 export const defaultAPIURL = 'https://api.openai.com'
 export const defaultAPIURLPath = OPENAI_CHAT_COMPLETIONS_API_PATH
-export const defaultProvider = 'Ollama'
+export const defaultProvider = 'Standard'
 export const defaultAPIModel = OPENAI_PREFERRED_DEFAULT_MODEL
 
 export const defaultChatGPTAPIAuthSessionAPIURL = 'https://chat.openai.com/api/auth/session'

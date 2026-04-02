@@ -195,8 +195,8 @@ export default function Toaster() {
                                             toast.type === 'success'
                                                 ? styles.iconSuccess
                                                 : toast.type === 'error'
-                                                  ? styles.iconError
-                                                  : styles.iconInfo
+                                                ? styles.iconError
+                                                : styles.iconInfo
                                         )}
                                     >
                                         {toast.type === 'success' ? (

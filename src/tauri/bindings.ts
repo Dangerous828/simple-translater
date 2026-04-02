@@ -35,6 +35,46 @@ export const commands = {
     async hideTranslatorWindow(): Promise<void> {
         await TAURI_INVOKE('hide_translator_window')
     },
+    async ensurePythonRuntime(): Promise<Result<null, string>> {
+        try {
+            return { status: 'ok', data: await TAURI_INVOKE('ensure_python_runtime') }
+        } catch (e) {
+            if (e instanceof Error) throw e
+            else return { status: 'error', error: e as any }
+        }
+    },
+    async ensureModel(): Promise<Result<null, string>> {
+        try {
+            return { status: 'ok', data: await TAURI_INVOKE('ensure_model') }
+        } catch (e) {
+            if (e instanceof Error) throw e
+            else return { status: 'error', error: e as any }
+        }
+    },
+    async standardTranslate(prompt: string): Promise<Result<StandardTranslateResponse, string>> {
+        try {
+            return { status: 'ok', data: await TAURI_INVOKE('standard_translate', { prompt }) }
+        } catch (e) {
+            if (e instanceof Error) throw e
+            else return { status: 'error', error: e as any }
+        }
+    },
+    async standardStatus(): Promise<Result<StandardStatusResponse, string>> {
+        try {
+            return { status: 'ok', data: await TAURI_INVOKE('standard_status') }
+        } catch (e) {
+            if (e instanceof Error) throw e
+            else return { status: 'error', error: e as any }
+        }
+    },
+    async standardRuntimeInfo(): Promise<Result<StandardRuntimeInfoResponse, string>> {
+        try {
+            return { status: 'ok', data: await TAURI_INVOKE('standard_runtime_info') }
+        } catch (e) {
+            if (e instanceof Error) throw e
+            else return { status: 'error', error: e as any }
+        }
+    },
 }
 
 /** user-defined events **/
@@ -50,6 +90,18 @@ export const events = __makeEvents__<{
 /** user-defined types **/
 
 export type ConfigUpdatedEvent = null
+export type StandardRuntimeInfoResponse = {
+    daemon_running: boolean
+    threads: number
+    gpu_layers: number
+    batch: number
+    ctx: number
+    backend: string
+    cuda_available: boolean
+    detected_cuda_version: string
+}
+export type StandardStatusResponse = { python_ready: boolean; model_ready: boolean; model_path: string }
+export type StandardTranslateResponse = { text: string }
 
 /** tauri-specta globals **/
 

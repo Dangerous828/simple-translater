@@ -7,11 +7,12 @@ import { Checkbox } from 'baseui-sd/checkbox'
 import { Select, type Value } from 'baseui-sd/select'
 import toast from 'react-hot-toast/headless'
 import { MdArrowBack, MdSave } from 'react-icons/md'
+import { invoke } from '@tauri-apps/api/core'
 
 import { useTheme } from '../hooks/useTheme'
 import { useThemeType } from '../hooks/useThemeType'
 import type { ISettings, ThemeType } from '../types'
-import { getSettings, setSettings } from '../utils'
+import { getSettings, isMacOS, setSettings } from '../utils'
 import { CUSTOM_MODEL_ID } from '../constants'
 
 export interface InnerSettingsProps {
@@ -26,7 +27,12 @@ const THEME_OPTIONS: Array<{ label: string; id: ThemeType }> = [
     { label: 'Dark', id: 'dark' },
 ]
 
-const HEADER_HEIGHT_PX = 0
+const HEADER_HEIGHT_PX = 56
+
+const PROVIDER_OPTIONS: Array<{ label: string; id: ISettings['provider'] }> = [
+    { label: '标准模式（推荐，本地 Python）', id: 'Standard' },
+    { label: 'Ollama（可选）', id: 'Ollama' },
+]
 
 type StylesProps = {
     bg: string
@@ -35,39 +41,41 @@ type StylesProps = {
     muted: string
     titleColor: string
     topOffsetPx: number
+    primary: string
 }
 
 const useStyles = createUseStyles<string, StylesProps>({
-    page: (p) => ({
+    'page': (p) => ({
         background: p.bg,
         minHeight: '100%',
     }),
-    header: (p) => ({
+    'header': (p) => ({
         position: 'fixed',
         top: `${p.topOffsetPx}px`,
         left: 0,
         right: 0,
         height: `${HEADER_HEIGHT_PX}px`,
-        zIndex: 500,
+        // Must be above Window titlebar background on macOS.
+        zIndex: 2147483647,
         background: p.bg,
         borderBottom: `1px solid ${p.border}`,
         backdropFilter: 'blur(10px)',
         WebkitBackdropFilter: 'blur(10px)',
     }),
-    headerInner: {
+    'headerInner': {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '12px 16px',
         gap: 12,
     },
-    headerLeft: {
+    'headerLeft': {
         display: 'flex',
         alignItems: 'center',
         gap: 10,
         minWidth: 0,
     },
-    title: (p) => ({
+    'title': (p) => ({
         color: p.titleColor,
         fontWeight: 750,
         letterSpacing: '-0.01em',
@@ -75,55 +83,91 @@ const useStyles = createUseStyles<string, StylesProps>({
         overflow: 'hidden',
         textOverflow: 'ellipsis',
     }),
-    headerRight: {
+    'headerRight': {
         display: 'flex',
         alignItems: 'center',
         gap: 10,
     },
-    content: (p) => ({
+    'content': () => ({
         padding: 16,
-        paddingTop: p.topOffsetPx + HEADER_HEIGHT_PX + 16,
+        // The fixed header is already offset by `topOffsetPx` (macOS traffic-lights).
+        // The Window component also reserves the safe area via paddingTop, so only reserve header height here.
+        paddingTop: HEADER_HEIGHT_PX,
     }),
-    grid: {
+    'grid': {
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
         gap: 14,
         alignItems: 'start',
     },
-    card: (p) => ({
+    'card': (p) => ({
         background: p.cardBg,
         border: `1px solid ${p.border}`,
         borderRadius: 16,
         padding: 14,
         boxShadow: '0 8px 26px rgba(0,0,0,0.06)',
     }),
-    cardTitle: (p) => ({
+    'cardTitle': (p) => ({
         color: p.titleColor,
         fontWeight: 750,
         letterSpacing: '-0.01em',
         marginBottom: 10,
     }),
-    field: {
+    'field': {
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
         marginTop: 12,
     },
-    label: (p) => ({
+    'label': (p) => ({
         color: p.titleColor,
         fontWeight: 650,
     }),
-    help: (p) => ({
+    'help': (p) => ({
         color: p.muted,
         fontSize: 12,
         lineHeight: 1.45,
     }),
-    error: {
+    'error': {
         color: '#dc2626',
         fontSize: 12,
         lineHeight: 1.45,
     },
-    footer: (p) => ({
+    'progressButtonWrap': {
+        position: 'relative',
+        overflow: 'hidden',
+        borderRadius: 10,
+        display: 'inline-flex',
+        width: 'fit-content',
+        maxWidth: '100%',
+    },
+    'progressFill': (p) => ({
+        position: 'absolute',
+        inset: 0,
+        width: '0%',
+        background: `linear-gradient(90deg, ${p.primary} 0%, rgba(255,255,255,0.0) 100%)`,
+        opacity: 0.18,
+        transformOrigin: 'left center',
+        pointerEvents: 'none',
+        transition: 'width 240ms ease',
+    }),
+    'progressFillIndeterminate': (p) => ({
+        position: 'absolute',
+        inset: 0,
+        background: `linear-gradient(90deg, rgba(255,255,255,0) 0%, ${p.primary} 35%, rgba(255,255,255,0) 70%)`,
+        opacity: 0.18,
+        pointerEvents: 'none',
+        animation: '$progressSweep 1.2s ease-in-out infinite',
+    }),
+    'progressContent': {
+        position: 'relative',
+        zIndex: 1,
+    },
+    '@keyframes progressSweep': {
+        '0%': { transform: 'translateX(-80%)' },
+        '100%': { transform: 'translateX(80%)' },
+    },
+    'footer': (p) => ({
         position: 'fixed',
         bottom: 0,
         left: 0,
@@ -191,6 +235,7 @@ function HotkeyCaptureInput(props: {
         muted: theme.colors.contentSecondary,
         titleColor: theme.colors.contentPrimary,
         topOffsetPx: 0,
+        primary: theme.colors.primary,
     })
 
     const [capturing, setCapturing] = useState(false)
@@ -206,6 +251,9 @@ function HotkeyCaptureInput(props: {
                 clearOnEscape
                 onFocus={() => setCapturing(true)}
                 onBlur={() => setCapturing(false)}
+                // If the input is already focused, clicking again won't fire onFocus.
+                // Use mouse down to re-enter capture mode for "re-record" UX.
+                onMouseDown={() => setCapturing(true)}
                 onKeyDown={(e) => {
                     if (!capturing) return
                     e.preventDefault()
@@ -213,6 +261,9 @@ function HotkeyCaptureInput(props: {
                     const normalized = normalizeHotkeyFromEvent(e)
                     if (normalized === null) return
                     props.onChange(normalized)
+                    // Exit capture mode after a successful capture so users can click again to re-capture.
+                    setCapturing(false)
+                    inputRef.current?.blur()
                 }}
                 onChange={(e) => props.onChange((e.target as HTMLInputElement).value)}
             />
@@ -228,7 +279,7 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
     const { t } = useTranslation()
     const { theme } = useTheme()
     // Window already reserves the macOS traffic-lights safe area.
-    const topOffsetPx = 0
+    const topOffsetPx = isMacOS ? 46 : 0
     const styles = useStyles({
         bg: theme.colors.backgroundPrimary,
         border: theme.colors.borderTransparent ?? 'rgba(0,0,0,0.08)',
@@ -236,6 +287,7 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
         muted: theme.colors.contentSecondary,
         titleColor: theme.colors.contentPrimary,
         topOffsetPx,
+        primary: theme.colors.primary,
     })
     const { refreshThemeType } = useThemeType()
 
@@ -243,6 +295,82 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
     const [saving, setSaving] = useState(false)
     const [oldSettings, setOldSettings] = useState<ISettings | null>(null)
     const [draft, setDraft] = useState<Partial<ISettings>>({})
+    const [stdPreparing, setStdPreparing] = useState(false)
+    const [stdStep, setStdStep] = useState<
+        'idle' | 'creatingVenv' | 'upgradingPip' | 'installingDeps' | 'downloadingModel' | 'verifying' | 'done'
+    >('idle')
+    const stdStepRef = useRef<
+        'idle' | 'creatingVenv' | 'upgradingPip' | 'installingDeps' | 'downloadingModel' | 'verifying' | 'done'
+    >('idle')
+    const [stdProgress, setStdProgress] = useState(0)
+    const stdProgressTimerRef = useRef<number | null>(null)
+    const [stdStatus, setStdStatus] = useState<{ pythonReady: boolean; modelReady: boolean; modelPath: string } | null>(
+        null
+    )
+    const [stdStatusRefreshing, setStdStatusRefreshing] = useState(false)
+    const [stdRuntimeInfo, setStdRuntimeInfo] = useState<{
+        daemonRunning: boolean
+        threads: number
+        gpuLayers: number
+        batch: number
+        ctx: number
+    } | null>(null)
+
+    const refreshStdStatus = useCallback(
+        async ({ silent = false }: { silent?: boolean } = {}) => {
+            if (stdStatusRefreshing) return
+            setStdStatusRefreshing(true)
+            const toastId = 'std-status-refresh'
+            if (!silent) {
+                toast.loading('刷新中…', { id: toastId })
+            }
+            try {
+                const r = (await invoke('standard_status')) as {
+                    python_ready: boolean
+                    model_ready: boolean
+                    model_path: string
+                }
+                setStdStatus({
+                    pythonReady: !!r.python_ready,
+                    modelReady: !!r.model_ready,
+                    modelPath: String(r.model_path ?? ''),
+                })
+                if (!silent) {
+                    toast.success('已刷新标准模式状态', { id: toastId })
+                }
+            } catch (e) {
+                console.debug('[settings] standard_status failed', e)
+                const msg = e instanceof Error ? e.message : String(e)
+                if (!silent) {
+                    toast.error(`刷新失败：${msg}`, { id: toastId })
+                }
+            } finally {
+                setStdStatusRefreshing(false)
+            }
+        },
+        [stdStatusRefreshing]
+    )
+
+    const refreshStdRuntimeInfo = useCallback(async () => {
+        try {
+            const r = (await invoke('standard_runtime_info')) as {
+                daemon_running: boolean
+                threads: number
+                gpu_layers: number
+                batch: number
+                ctx: number
+            }
+            setStdRuntimeInfo({
+                daemonRunning: !!r.daemon_running,
+                threads: Number(r.threads ?? 0),
+                gpuLayers: Number(r.gpu_layers ?? 0),
+                batch: Number(r.batch ?? 0),
+                ctx: Number(r.ctx ?? 0),
+            })
+        } catch (e) {
+            console.debug('[settings] standard_runtime_info failed', e)
+        }
+    }, [])
 
     const keepAlive = (draft.ollamaModelLifetimeInMemory ?? '').trim()
     const keepAliveInvalid = keepAlive.length > 0 && !isValidOllamaKeepAlive(keepAlive)
@@ -253,13 +381,20 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
             const s = await getSettings()
             if (!mounted) return
             setOldSettings(s)
-            setDraft(s)
+            // Migration: older builds forced provider to Ollama.
+            // Default experience should be Standard mode; users can switch back to Ollama explicitly.
+            setDraft({
+                ...s,
+                provider: (s.provider === 'Ollama' ? 'Standard' : s.provider ?? 'Standard') as ISettings['provider'],
+            })
             setLoading(false)
+            void refreshStdStatus({ silent: true })
+            void refreshStdRuntimeInfo()
         })().catch(console.error)
         return () => {
             mounted = false
         }
-    }, [])
+    }, [refreshStdRuntimeInfo, refreshStdStatus])
 
     const themeValue: Value = useMemo(() => {
         const id = (draft.themeType ?? 'followTheSystem') as ThemeType
@@ -267,16 +402,101 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
         return [{ id, label }]
     }, [draft.themeType])
 
+    const providerValue: Value = useMemo(() => {
+        const id = (draft.provider ?? 'Standard') as ISettings['provider']
+        const label = PROVIDER_OPTIONS.find((o) => o.id === id)?.label ?? id
+        return [{ id, label }]
+    }, [draft.provider])
+
+    const isOllama = (draft.provider ?? 'Standard') === 'Ollama'
+
+    const setStdStepSafe = useCallback(
+        (
+            next:
+                | 'idle'
+                | 'creatingVenv'
+                | 'upgradingPip'
+                | 'installingDeps'
+                | 'downloadingModel'
+                | 'verifying'
+                | 'done'
+        ) => {
+            stdStepRef.current = next
+            setStdStep(next)
+        },
+        []
+    )
+
+    const prepareStandard = useCallback(async () => {
+        if (stdPreparing) return
+        setStdPreparing(true)
+        setStdStepSafe('creatingVenv')
+        setStdProgress(0)
+        if (stdProgressTimerRef.current) {
+            window.clearInterval(stdProgressTimerRef.current)
+            stdProgressTimerRef.current = null
+        }
+        stdProgressTimerRef.current = window.setInterval(() => {
+            setStdProgress((p) => {
+                const step = stdStepRef.current
+                const cap =
+                    step === 'creatingVenv'
+                        ? 0.18
+                        : step === 'upgradingPip'
+                        ? 0.28
+                        : step === 'installingDeps'
+                        ? 0.55
+                        : step === 'downloadingModel'
+                        ? 0.92
+                        : step === 'verifying'
+                        ? 0.97
+                        : 1
+                const next = Math.min(cap, p + 0.015)
+                return next
+            })
+        }, 180)
+        try {
+            // Phase 1: python runtime + venv + pip
+            setStdStepSafe('upgradingPip')
+            await invoke('ensure_python_runtime')
+            // For UX: show a distinct "installing deps" stage even though pip runs inside ensure_python_runtime.
+            // This is a pseudo-stage but makes the progress feel consistent.
+            setStdStepSafe('installingDeps')
+            // Phase 2: model download
+            setStdStepSafe('downloadingModel')
+            await invoke('ensure_model')
+            // Phase 3: verify status
+            setStdStepSafe('verifying')
+            setStdProgress(1)
+            void refreshStdStatus({ silent: true })
+            toast.success('标准模式已准备完成（Python/模型就绪）')
+            setStdStepSafe('done')
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            toast.error(`标准模式准备失败：${msg}`)
+        } finally {
+            setStdPreparing(false)
+            if (stdProgressTimerRef.current) {
+                window.clearInterval(stdProgressTimerRef.current)
+                stdProgressTimerRef.current = null
+            }
+            window.setTimeout(() => {
+                setStdStepSafe('idle')
+                setStdProgress(0)
+            }, 700)
+        }
+    }, [refreshStdStatus, setStdStepSafe, stdPreparing])
+
     const save = useCallback(async () => {
         if (!oldSettings) return
         setSaving(true)
         try {
-            if (keepAliveInvalid) {
+            if (isOllama && keepAliveInvalid) {
                 toast.error('模型存活时间格式不正确（例如 5m / 1h / 30s / 0）')
                 return
             }
             await setSettings({
-                provider: 'Ollama',
+                provider: (draft.provider ?? 'Standard') as ISettings['provider'],
                 themeType: draft.themeType ?? oldSettings.themeType,
                 enableBackgroundBlur: !!draft.enableBackgroundBlur,
                 hotkey: draft.hotkey ?? '',
@@ -299,7 +519,7 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
         } finally {
             setSaving(false)
         }
-    }, [draft, keepAliveInvalid, oldSettings, onSave, refreshThemeType, t])
+    }, [draft, isOllama, keepAliveInvalid, oldSettings, onSave, refreshThemeType, t])
 
     if (loading || !oldSettings) {
         return <div style={{ padding: 16, color: theme.colors.contentSecondary }}>{t('Loading')}...</div>
@@ -326,7 +546,7 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
                                 kind='primary'
                                 size='compact'
                                 isLoading={saving}
-                                disabled={keepAliveInvalid}
+                                disabled={isOllama && keepAliveInvalid}
                                 onClick={save}
                             >
                                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -342,77 +562,203 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
             <div className={styles.content}>
                 <div className={styles.grid}>
                     <div className={styles.card}>
-                        <div className={styles.cardTitle}>Ollama</div>
+                        <div className={styles.cardTitle}>提供商</div>
 
                         <div className={styles.field}>
-                            <div className={styles.label}>Ollama URL</div>
-                            <Input
-                                value={draft.ollamaAPIURL ?? ''}
-                                onChange={(e) =>
-                                    setDraft((d) => ({ ...d, ollamaAPIURL: (e.target as HTMLInputElement).value }))
-                                }
-                                placeholder='http://127.0.0.1:11434'
-                                clearOnEscape
-                            />
-                        </div>
-
-                        <div className={styles.field}>
-                            <div className={styles.label}>Ollama Model</div>
-                            <Input
-                                value={draft.ollamaAPIModel ?? ''}
-                                onChange={(e) =>
-                                    setDraft((d) => ({ ...d, ollamaAPIModel: (e.target as HTMLInputElement).value }))
-                                }
-                                placeholder='llama3.1'
-                                clearOnEscape
+                            <div className={styles.label}>默认提供商</div>
+                            <Select
+                                value={providerValue}
+                                clearable={false}
+                                searchable={false}
+                                options={PROVIDER_OPTIONS}
+                                onChange={(params) => {
+                                    const next = (params.value?.[0]?.id ?? 'Standard') as ISettings['provider']
+                                    setDraft((d) => ({ ...d, provider: next }))
+                                    // Apply immediately so Translator uses it without requiring an extra Save click.
+                                    setSettings({ provider: next }).catch(console.error)
+                                    toast.success(`已切换为：${next === 'Standard' ? '标准模式' : 'Ollama'}`)
+                                }}
                             />
                             <div className={styles.help}>
-                                {t('Tip')}: {t('You can also use')} <code>{CUSTOM_MODEL_ID}</code> + custom model name.
+                                标准模式会自动准备 Python 环境与下载模型；如你已安装 Ollama，可切换到 Ollama。
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className={styles.card}>
+                        <div className={styles.cardTitle}>标准模式（本地 Python）</div>
+
+                        <div className={styles.field}>
+                            <div className={styles.label}>默认模型（HuggingFace）</div>
+                            <Input value='tencent/HY-MT1.5-1.8B-GGUF (HY-MT1.5-1.8B-Q4_K_M.gguf)' disabled />
+                            <div className={styles.help}>
+                                首次使用会自动下载到本机缓存目录。模型较大，准备时间取决于网络与磁盘速度。
                             </div>
                         </div>
 
-                        {(draft.ollamaAPIModel ?? '') === CUSTOM_MODEL_ID ? (
+                        <div className={styles.field}>
+                            <div className={styles.label}>当前状态</div>
+                            <div className={styles.help}>
+                                Python：{stdStatus?.pythonReady ? '已就绪' : '未就绪'}；模型：
+                                {stdStatus?.modelReady ? '已就绪' : '未就绪'}
+                                {stdStatus?.modelPath ? (
+                                    <div style={{ marginTop: 6, wordBreak: 'break-all' }}>
+                                        模型路径：{stdStatus.modelPath}
+                                    </div>
+                                ) : null}
+                                {stdRuntimeInfo ? (
+                                    <div style={{ marginTop: 8 }}>
+                                        后端：{stdRuntimeInfo.daemonRunning ? '常驻服务运行中' : '未启动'}；threads：
+                                        {stdRuntimeInfo.threads}；gpu_layers：{stdRuntimeInfo.gpuLayers}；batch：
+                                        {stdRuntimeInfo.batch}；ctx：{stdRuntimeInfo.ctx}
+                                    </div>
+                                ) : null}
+                            </div>
+                        </div>
+
+                        <div className={styles.field}>
+                            {stdStatus?.pythonReady && stdStatus?.modelReady ? (
+                                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <Button kind='secondary' size='compact' disabled>
+                                        已就绪
+                                    </Button>
+                                    <Button
+                                        kind='tertiary'
+                                        size='compact'
+                                        isLoading={stdStatusRefreshing}
+                                        onClick={async () => {
+                                            await refreshStdStatus({ silent: false })
+                                            await refreshStdRuntimeInfo()
+                                        }}
+                                    >
+                                        重新检查
+                                    </Button>
+                                    <Button kind='secondary' size='compact' onClick={prepareStandard}>
+                                        重新准备
+                                    </Button>
+                                </div>
+                            ) : (
+                                <div className={styles.progressButtonWrap}>
+                                    {stdPreparing ? (
+                                        <div className={styles.progressFillIndeterminate} aria-hidden='true' />
+                                    ) : null}
+                                    <div
+                                        className={styles.progressFill}
+                                        style={{ width: `${Math.round(stdProgress * 100)}%` }}
+                                        aria-hidden='true'
+                                    />
+                                    <div className={styles.progressContent}>
+                                        <Button
+                                            kind='primary'
+                                            size='compact'
+                                            isLoading={false}
+                                            disabled={stdPreparing}
+                                            onClick={prepareStandard}
+                                        >
+                                            {stdPreparing
+                                                ? stdStep === 'downloadingModel'
+                                                    ? '下载模型中…'
+                                                    : stdStep === 'creatingVenv'
+                                                    ? '创建环境中…'
+                                                    : stdStep === 'upgradingPip'
+                                                    ? '升级 pip 中…'
+                                                    : stdStep === 'installingDeps'
+                                                    ? '安装依赖中…'
+                                                    : stdStep === 'verifying'
+                                                    ? '校验中…'
+                                                    : '准备中…'
+                                                : '一键准备（安装依赖 + 下载模型）'}
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+                            <div className={styles.help}>
+                                如果你打包了内置 Python，此按钮会创建 venv 并安装依赖；随后下载模型。
+                            </div>
+                        </div>
+                    </div>
+
+                    {isOllama ? (
+                        <div className={styles.card}>
+                            <div className={styles.cardTitle}>Ollama</div>
+
                             <div className={styles.field}>
-                                <div className={styles.label}>Custom model name</div>
+                                <div className={styles.label}>Ollama URL</div>
                                 <Input
-                                    value={draft.ollamaCustomModelName ?? ''}
+                                    value={draft.ollamaAPIURL ?? ''}
                                     onChange={(e) =>
-                                        setDraft((d) => ({
-                                            ...d,
-                                            ollamaCustomModelName: (e.target as HTMLInputElement).value,
-                                        }))
+                                        setDraft((d) => ({ ...d, ollamaAPIURL: (e.target as HTMLInputElement).value }))
                                     }
-                                    placeholder='llama3.1:8b'
+                                    placeholder='http://127.0.0.1:11434'
                                     clearOnEscape
                                 />
                             </div>
-                        ) : null}
 
-                        <div className={styles.field}>
-                            <div className={styles.label}>{t('The survival time of the Ollama model in memory')}</div>
-                            <Input
-                                value={draft.ollamaModelLifetimeInMemory ?? ''}
-                                onChange={(e) =>
-                                    setDraft((d) => ({
-                                        ...d,
-                                        ollamaModelLifetimeInMemory: (e.target as HTMLInputElement).value,
-                                    }))
-                                }
-                                placeholder='5m'
-                                clearOnEscape
-                            />
-                            <div className={styles.help}>
-                                {t('Tip')}: 例如 <code>5m</code> / <code>1h</code> / <code>30s</code> / <code>0</code>
-                                （立即卸载）。
+                            <div className={styles.field}>
+                                <div className={styles.label}>Ollama Model</div>
+                                <Input
+                                    value={draft.ollamaAPIModel ?? ''}
+                                    onChange={(e) =>
+                                        setDraft((d) => ({
+                                            ...d,
+                                            ollamaAPIModel: (e.target as HTMLInputElement).value,
+                                        }))
+                                    }
+                                    placeholder='llama3.1'
+                                    clearOnEscape
+                                />
+                                <div className={styles.help}>
+                                    {t('Tip')}: {t('You can also use')} <code>{CUSTOM_MODEL_ID}</code> + custom model
+                                    name.
+                                </div>
                             </div>
-                            {keepAliveInvalid ? (
-                                <div className={styles.error}>
-                                    格式不正确：请输入类似 <code>5m</code> / <code>1h</code> / <code>30s</code> /{' '}
-                                    <code>0</code>
+
+                            {(draft.ollamaAPIModel ?? '') === CUSTOM_MODEL_ID ? (
+                                <div className={styles.field}>
+                                    <div className={styles.label}>Custom model name</div>
+                                    <Input
+                                        value={draft.ollamaCustomModelName ?? ''}
+                                        onChange={(e) =>
+                                            setDraft((d) => ({
+                                                ...d,
+                                                ollamaCustomModelName: (e.target as HTMLInputElement).value,
+                                            }))
+                                        }
+                                        placeholder='llama3.1:8b'
+                                        clearOnEscape
+                                    />
                                 </div>
                             ) : null}
+
+                            <div className={styles.field}>
+                                <div className={styles.label}>
+                                    {t('The survival time of the Ollama model in memory')}
+                                </div>
+                                <Input
+                                    value={draft.ollamaModelLifetimeInMemory ?? ''}
+                                    onChange={(e) =>
+                                        setDraft((d) => ({
+                                            ...d,
+                                            ollamaModelLifetimeInMemory: (e.target as HTMLInputElement).value,
+                                        }))
+                                    }
+                                    placeholder='5m'
+                                    clearOnEscape
+                                />
+                                <div className={styles.help}>
+                                    {t('Tip')}: 例如 <code>5m</code> / <code>1h</code> / <code>30s</code> /{' '}
+                                    <code>0</code>
+                                    （立即卸载）。
+                                </div>
+                                {keepAliveInvalid ? (
+                                    <div className={styles.error}>
+                                        格式不正确：请输入类似 <code>5m</code> / <code>1h</code> / <code>30s</code> /{' '}
+                                        <code>0</code>
+                                    </div>
+                                ) : null}
+                            </div>
                         </div>
-                    </div>
+                    ) : null}
 
                     <div className={styles.card}>
                         <div className={styles.cardTitle}>快捷键</div>

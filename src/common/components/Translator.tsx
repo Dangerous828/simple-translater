@@ -77,7 +77,7 @@ export function Translator(props: TranslatorProps) {
         setResult('')
         console.debug('[translator] startTranslate', {
             inputLen: input.length,
-            provider: 'Ollama',
+            provider: settings.provider,
             ollamaAPIURL: settings.ollamaAPIURL,
             ollamaAPIModel: settings.ollamaAPIModel,
             ollamaCustomModelName: settings.ollamaCustomModelName,
@@ -100,7 +100,7 @@ export function Translator(props: TranslatorProps) {
                 mode: 'translate',
                 updatedAt: String(Date.now()),
                 createdAt: String(Date.now()),
-                provider: 'Ollama',
+                provider: settings.provider,
             } satisfies Action
             const query: TranslateQuery = {
                 mode: 'translate',
@@ -110,7 +110,7 @@ export function Translator(props: TranslatorProps) {
                 detectTo: targetLang,
                 action,
                 onStatusCode: (statusCode: number) => {
-                    console.debug('[translator] ollama status', statusCode)
+                    console.debug('[translator] status', statusCode)
                 },
                 onMessage: async (msg: { content?: string }) => {
                     if (!msg.content) return
@@ -134,7 +134,7 @@ export function Translator(props: TranslatorProps) {
                     translatedText: finalText,
                     sourceLang,
                     targetLang,
-                    provider: 'Ollama',
+                    provider: settings.provider,
                 })
             }
         } catch (e) {
@@ -149,6 +149,7 @@ export function Translator(props: TranslatorProps) {
         }
     }, [
         settings.defaultTargetLanguage,
+        settings.provider,
         settings.ollamaAPIModel,
         settings.ollamaAPIURL,
         settings.ollamaCustomModelName,

@@ -7,6 +7,8 @@ mod config;
 mod fetch;
 mod insertion;
 mod lang;
+mod model;
+mod python;
 mod tray;
 mod utils;
 mod windows;
@@ -26,6 +28,9 @@ use tauri_specta::Event;
 use crate::config::{clear_config_cache, get_config_content, ConfigUpdatedEvent};
 use crate::fetch::fetch_stream;
 use crate::lang::detect_lang;
+use crate::python::{
+    ensure_model, ensure_python_runtime, standard_runtime_info, standard_status, standard_translate,
+};
 use crate::windows::{
     hide_translator_window, show_history_window, show_translator_window_command,
     show_translator_window_with_selected_text_command, TRANSLATOR_WIN_NAME,
@@ -122,6 +127,11 @@ fn main() {
             remember_active_window_command,
             detect_lang,
             hide_translator_window,
+            ensure_python_runtime,
+            ensure_model,
+            standard_translate,
+            standard_status,
+            standard_runtime_info,
         ])
         .events(tauri_specta::collect_events![ConfigUpdatedEvent]);
 

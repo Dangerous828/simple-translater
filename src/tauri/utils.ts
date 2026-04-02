@@ -28,12 +28,27 @@ export function isMissingNormalKey(hotkey: string): boolean {
     return tokens.every((token) => isModifierKey(token))
 }
 
+function normalizeTauriHotkey(hotkey: string): string {
+    // The UI uses CmdOrCtrl; normalize to Tauri's canonical "CommandOrControl" for compatibility.
+    return hotkey
+        .split('+')
+        .map((t) => t.trim())
+        .map((t) => {
+            if (t.toUpperCase() === 'CMDORCTRL' || t.toUpperCase() === 'CMDORCONTROL') {
+                return 'CommandOrControl'
+            }
+            return t
+        })
+        .join('+')
+}
+
 export async function bindHotkey(oldHotKey?: string) {
     if (oldHotKey && !isMissingNormalKey(oldHotKey) && (await isRegistered(oldHotKey))) {
         await unregister(oldHotKey)
     }
     const settings = await getSettings()
     if (!settings.hotkey) return
+    const hotkey = normalizeTauriHotkey(settings.hotkey)
     if (isMissingNormalKey(settings.hotkey)) {
         sendNotification({
             title: 'Cannot bind hotkey',
@@ -41,14 +56,19 @@ export async function bindHotkey(oldHotKey?: string) {
         })
         return
     }
-    if (await isRegistered(settings.hotkey)) {
-        await unregister(settings.hotkey)
+    if (await isRegistered(hotkey)) {
+        await unregister(hotkey)
     }
-    await register(settings.hotkey, () => {
-        return commands.showTranslatorWindowWithSelectedTextCommand()
-    }).then(() => {
-        console.log('register hotkey success')
-    })
+    try {
+        await register(hotkey, () => commands.showTranslatorWindowWithSelectedTextCommand())
+        console.log('register hotkey success', hotkey)
+    } catch (e) {
+        console.error('register hotkey failed', hotkey, e)
+        sendNotification({
+            title: 'Hotkey bind failed',
+            body: `Failed to bind hotkey: ${hotkey}`,
+        })
+    }
 }
 
 export async function bindDisplayWindowHotkey(oldHotKey?: string) {
@@ -57,6 +77,7 @@ export async function bindDisplayWindowHotkey(oldHotKey?: string) {
     }
     const settings = await getSettings()
     if (!settings.displayWindowHotkey) return
+    const hotkey = normalizeTauriHotkey(settings.displayWindowHotkey)
     if (isMissingNormalKey(settings.displayWindowHotkey)) {
         sendNotification({
             title: 'Cannot bind hotkey',
@@ -64,14 +85,19 @@ export async function bindDisplayWindowHotkey(oldHotKey?: string) {
         })
         return
     }
-    if (await isRegistered(settings.displayWindowHotkey)) {
-        await unregister(settings.displayWindowHotkey)
+    if (await isRegistered(hotkey)) {
+        await unregister(hotkey)
     }
-    await register(settings.displayWindowHotkey, () => {
-        commands.showTranslatorWindowCommand()
-    }).then(() => {
-        console.log('register display window hotkey success')
-    })
+    try {
+        await register(hotkey, () => commands.showTranslatorWindowCommand())
+        console.log('register display window hotkey success', hotkey)
+    } catch (e) {
+        console.error('register display window hotkey failed', hotkey, e)
+        sendNotification({
+            title: 'Hotkey bind failed',
+            body: `Failed to bind hotkey: ${hotkey}`,
+        })
+    }
 }
 
 export function onSettingsSave(oldSettings: ISettings) {
