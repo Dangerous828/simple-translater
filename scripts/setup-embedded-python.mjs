@@ -23,25 +23,44 @@ function run(cmd, args, opts = {}) {
 }
 
 function curlText(url, headers = {}) {
-    const args = ['-fsSL', '--retry', '3', '--retry-delay', '1', url]
+    const args = ['-fsSL', '--retry', '3', '--retry-delay', '1']
     for (const [k, v] of Object.entries(headers)) {
         args.push('-H', `${k}: ${v}`)
     }
+    args.push(url)
     const res = spawnSync('curl', args, { encoding: 'utf8' })
+    if (res.error) {
+        throw new Error(`curl spawn failed for ${url}\nerror: ${String(res.error)}`)
+    }
+
+    const stdout = (res.stdout || '').toString()
+    const stderr = (res.stderr || '').toString()
+    const stdoutTrim = stdout.trim()
+
+    // On some Windows setups, curl may be terminated unexpectedly (status=null),
+    // but still returns a complete JSON payload. If stdout looks like JSON and
+    // stderr is empty, treat it as success to avoid flaky failures.
+    if (res.status === null && stdoutTrim && !stderr.trim()) {
+        const first = stdoutTrim[0]
+        if (first === '{' || first === '[') {
+            console.warn(`[python] curl returned status=null, but stdout looks like JSON; continue`)
+            return stdout
+        }
+    }
+
     if (res.status !== 0) {
-        const stderr = (res.stderr || '').toString().trim()
-        const stdout = (res.stdout || '').toString().trim()
-        const bodyHint = stdout ? stdout.slice(0, 400) + (stdout.length > 400 ? '…' : '') : ''
+        const bodyHint = stdoutTrim ? stdoutTrim.slice(0, 400) + (stdoutTrim.length > 400 ? '…' : '') : ''
+        const codeOrSignal = res.status === null ? `signal=${String(res.signal || 'unknown')}` : String(res.status)
         const msg = [
-            `curl failed (${res.status}) for ${url}`,
-            stderr ? `stderr: ${stderr}` : '',
+            `curl failed (${codeOrSignal}) for ${url}`,
+            stderr.trim() ? `stderr: ${stderr.trim()}` : '',
             bodyHint ? `body(head): ${bodyHint}` : '',
         ]
             .filter(Boolean)
             .join('\n')
         throw new Error(msg)
     }
-    return (res.stdout || '').toString()
+    return stdout
 }
 
 async function fetchTextWithFallback(url, headers = {}) {
