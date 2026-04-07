@@ -8,6 +8,7 @@ import { Select, type Value } from 'baseui-sd/select'
 import toast from 'react-hot-toast/headless'
 import { MdArrowBack, MdSave } from 'react-icons/md'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type Event } from '@tauri-apps/api/event'
 
 import { useTheme } from '../hooks/useTheme'
 import { useThemeType } from '../hooks/useThemeType'
@@ -471,9 +472,30 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
             // For UX: show a distinct "installing deps" stage even though pip runs inside ensure_python_runtime.
             // This is a pseudo-stage but makes the progress feel consistent.
             setStdStepSafe('installingDeps')
-            // Phase 2: model download
+            // Phase 2: model download (Rust 流式下载 + 事件进度；不用 Python 子进程，避免管道阻塞)
             setStdStepSafe('downloadingModel')
-            await invoke('ensure_model')
+            if (stdProgressTimerRef.current) {
+                window.clearInterval(stdProgressTimerRef.current)
+                stdProgressTimerRef.current = null
+            }
+            const unlistenDl = await listen<{ received: number; total: number | null }>(
+                'standard-model-download-progress',
+                (ev: Event<{ received: number; total: number | null }>) => {
+                    const { received, total } = ev.payload
+                    if (typeof total === 'number' && total > 0) {
+                        setStdProgress(0.55 + 0.37 * Math.min(1, received / total))
+                    } else {
+                        const guessTotal = 1.45e9
+                        setStdProgress(0.55 + 0.37 * Math.min(0.97, received / guessTotal))
+                    }
+                }
+            )
+            try {
+                const hfRaw = (draft.hfEndpoint ?? '').trim()
+                await invoke('ensure_model', { hfEndpoint: hfRaw.length > 0 ? hfRaw : null })
+            } finally {
+                unlistenDl()
+            }
             // Phase 3: verify status
             setStdStepSafe('verifying')
             setStdProgress(1)
@@ -494,7 +516,7 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
                 setStdProgress(0)
             }, 700)
         }
-    }, [refreshStdStatus, setStdStepSafe, stdPreparing])
+    }, [draft.hfEndpoint, refreshStdStatus, setStdStepSafe, stdPreparing])
 
     const save = useCallback(async () => {
         if (!oldSettings) return
@@ -515,6 +537,7 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
                 ollamaAPIModel: draft.ollamaAPIModel ?? 'llama3.1',
                 ollamaCustomModelName: draft.ollamaCustomModelName ?? '',
                 ollamaModelLifetimeInMemory: draft.ollamaModelLifetimeInMemory ?? '5m',
+                hfEndpoint: (draft.hfEndpoint ?? '').trim(),
             })
             await refreshThemeType()
             onSave?.(oldSettings)
@@ -606,6 +629,40 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
                         </div>
 
                         <div className={styles.field}>
+                            <div className={styles.label}>Hugging Face 下载地址（可选）</div>
+                            <Input
+                                value={draft.hfEndpoint ?? ''}
+                                onChange={(e) =>
+                                    setDraft((d) => ({ ...d, hfEndpoint: (e.target as HTMLInputElement).value }))
+                                }
+                                placeholder='默认：https://huggingface.co'
+                                clearOnEscape
+                            />
+                            <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                <Button
+                                    kind='tertiary'
+                                    size='compact'
+                                    type='button'
+                                    onClick={() => setDraft((d) => ({ ...d, hfEndpoint: 'https://hf-mirror.com' }))}
+                                >
+                                    填入 hf-mirror 镜像
+                                </Button>
+                                <Button
+                                    kind='tertiary'
+                                    size='compact'
+                                    type='button'
+                                    onClick={() => setDraft((d) => ({ ...d, hfEndpoint: '' }))}
+                                >
+                                    恢复官方地址
+                                </Button>
+                            </div>
+                            <div className={styles.help}>
+                                无法直连官方站点时，可填镜像根地址（不要带仓库路径）。此处留空时，会依次使用系统环境变量
+                                HF_ENDPOINT（若已配置）、否则使用官方 huggingface.co。
+                            </div>
+                        </div>
+
+                        <div className={styles.field}>
                             <div className={styles.label}>当前状态</div>
                             <div className={styles.help}>
                                 Python：{stdStatus?.pythonReady ? '已就绪' : '未就绪'}；模型：
@@ -685,8 +742,8 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
                                 如果你打包了内置 Python，此按钮会创建 venv 并安装依赖；随后下载模型。
                                 {stdPreparing ? (
                                     <div style={{ marginTop: 6 }}>
-                                        pip 与下载的详细进度会打印在<strong>启动本应用的终端</strong>
-                                        （例如运行 <code style={{ fontSize: 12 }}>pnpm dev-tauri</code> 的那个窗口），界面里只会显示阶段提示。
+                                        pip 日志在<strong>启动本应用的终端</strong>；模型下载使用上方「Hugging Face
+                                        下载地址」或官方站点，进度条随已下载字节更新。
                                     </div>
                                 ) : null}
                             </div>

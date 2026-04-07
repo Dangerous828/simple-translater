@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 
+import { getSettings } from '../utils'
 import { AbstractEngine } from './abstract-engine'
 import type { IMessageRequest, IModel } from './interfaces'
 
@@ -36,8 +37,11 @@ export class StandardPython extends AbstractEngine {
             req.onStatusCode?.(200)
 
             const prompt = [req.rolePrompt, req.commandPrompt].filter(Boolean).join('\n\n').trim()
+            const settings = await getSettings()
+            const hf = (settings.hfEndpoint ?? '').trim()
             const resp = await invoke<StandardTranslateResponse>('standard_translate', {
                 prompt,
+                hfEndpoint: hf.length > 0 ? hf : null,
             })
 
             await req.onMessage({ role: 'assistant', content: resp.text, isFullText: true })

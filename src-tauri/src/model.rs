@@ -1,13 +1,18 @@
 use debug_print::debug_println;
-use serde::{Deserialize, Serialize};
+use futures_util::StreamExt;
+use serde::Serialize;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+use tauri::Emitter;
 use tauri::Manager;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct HfDownloadResponse {
-    ok: bool,
-    // optional diagnostic
-    message: Option<String>,
-    path: Option<String>,
+/// Match `standard_status` heuristic: partial GGUF must not count as ready.
+const MIN_GGUF_BYTES: u64 = 100 * 1024 * 1024;
+
+#[derive(Clone, Serialize)]
+struct ModelDownloadProgressPayload {
+    received: u64,
+    total: Option<u64>,
 }
 
 fn app_data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -16,38 +21,150 @@ fn app_data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
         .map_err(|e| format!("failed to resolve app_data_dir: {}", e))
 }
 
-fn resource_file(app: &tauri::AppHandle, rel: &str) -> Result<std::path::PathBuf, String> {
-    let rd = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("failed to resolve resource_dir: {}", e))?;
-    let p1 = rd.join(rel);
-    if p1.exists() {
-        return Ok(p1);
-    }
-    let p2 = rd.join("resources").join(rel);
-    if p2.exists() {
-        return Ok(p2);
-    }
-    #[cfg(debug_assertions)]
-    {
-        let p3 = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join(rel);
-        if p3.exists() {
-            return Ok(p3);
+/// App 设置优先，其次系统环境变量 `HF_ENDPOINT`，最后官方域名。
+fn resolve_hf_base(user_override: Option<&str>) -> String {
+    if let Some(s) = user_override {
+        let t = s.trim().trim_end_matches('/').to_string();
+        if !t.is_empty() {
+            return t;
         }
     }
-    Ok(p2)
+    std::env::var("HF_ENDPOINT")
+        .ok()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://huggingface.co".to_string())
 }
 
-pub async fn ensure_model_downloaded(app: &tauri::AppHandle, repo: &str) -> Result<(), String> {
+fn hf_resolve_file_url(base: &str, repo: &str, revision: &str, filename: &str) -> String {
+    format!("{}/{}/resolve/{}/{}", base, repo, revision, filename)
+}
+
+async fn gguf_file_ready(path: &Path) -> bool {
+    tokio::fs::metadata(path)
+        .await
+        .map(|m| m.is_file() && m.len() >= MIN_GGUF_BYTES)
+        .unwrap_or(false)
+}
+
+/// Stream download from Hugging Face `resolve` URL (follows LFS redirects). No Python subprocess.
+async fn download_url_to_file(
+    app: &tauri::AppHandle,
+    url: &str,
+    dest: &Path,
+    hf_base_for_hint: &str,
+) -> Result<u64, String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(60))
+        .user_agent(concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"), " (standard-mode)"))
+        .redirect(reqwest::redirect::Policy::limited(48))
+        .build()
+        .map_err(|e| format!("http client: {}", e))?;
+
+    let mut req = client.get(url);
+    if let Ok(token) = std::env::var("HUGGING_FACE_HUB_TOKEN") {
+        let t = token.trim();
+        if !t.is_empty() {
+            req = req.header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", t),
+            );
+        }
+    }
+
+    let res = req.send().await.map_err(|e| format!("request failed: {}", e))?;
+    let status = res.status();
+    if !status.is_success() {
+        let hint = if status == 401 || status == 403 {
+            "（若仓库需登录，请设置环境变量 HUGGING_FACE_HUB_TOKEN）"
+        } else if hf_base_for_hint.contains("huggingface.co") {
+            "（可在设置中填写 Hugging Face 镜像地址，例如 https://hf-mirror.com）"
+        } else {
+            ""
+        };
+        let body_prefix = res
+            .text()
+            .await
+            .unwrap_or_default()
+            .chars()
+            .take(200)
+            .collect::<String>();
+        return Err(format!(
+            "HTTP {} {}{}\n{}",
+            status.as_u16(),
+            status.canonical_reason().unwrap_or(""),
+            hint,
+            body_prefix
+        ));
+    }
+
+    let total_hint = res.content_length();
+    let mut stream = res.bytes_stream();
+    let mut part_os = dest.as_os_str().to_os_string();
+    part_os.push(".part");
+    let part_path = PathBuf::from(part_os);
+    if let Some(parent) = part_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("create_dir: {}", e))?;
+    }
+    let mut file = tokio::fs::File::create(&part_path)
+        .await
+        .map_err(|e| format!("create part file: {}", e))?;
+
+    let mut received: u64 = 0;
+    let mut last_emit = Instant::now();
+    let mut since_emit: u64 = 0;
+    const EMIT_INTERVAL: Duration = Duration::from_millis(300);
+    const EMIT_MIN_BYTES: u64 = 512 * 1024;
+
+    let emit = |received: u64, total: Option<u64>| {
+        let _ = app.emit(
+            "standard-model-download-progress",
+            ModelDownloadProgressPayload { received, total },
+        );
+    };
+
+    emit(0, total_hint);
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("download stream: {}", e))?;
+        let n = chunk.len() as u64;
+        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+            .await
+            .map_err(|e| format!("write file: {}", e))?;
+        received = received.saturating_add(n);
+        since_emit = since_emit.saturating_add(n);
+        if last_emit.elapsed() >= EMIT_INTERVAL || since_emit >= EMIT_MIN_BYTES {
+            emit(received, total_hint);
+            last_emit = Instant::now();
+            since_emit = 0;
+        }
+    }
+
+    emit(received, Some(received));
+    tokio::io::AsyncWriteExt::flush(&mut file)
+        .await
+        .map_err(|e| format!("flush: {}", e))?;
+    drop(file);
+
+    tokio::fs::rename(&part_path, dest)
+        .await
+        .map_err(|e| format!("rename part -> final: {}", e))?;
+
+    Ok(received)
+}
+
+pub async fn ensure_model_downloaded(
+    app: &tauri::AppHandle,
+    repo: &str,
+    hf_endpoint_override: Option<&str>,
+) -> Result<(), String> {
     let models_root = app_data_dir(app)?.join("models");
     tokio::fs::create_dir_all(&models_root)
         .await
         .map_err(|e| format!("failed to create models dir: {}", e))?;
 
-    // Marker dir for repo
     let repo_dir = models_root.join(repo.replace('/', "__"));
     let marker = repo_dir.join(".downloaded");
     if marker.exists() {
@@ -59,75 +176,44 @@ pub async fn ensure_model_downloaded(app: &tauri::AppHandle, repo: &str) -> Resu
         .await
         .map_err(|e| format!("failed to create repo dir: {}", e))?;
 
-    // Download via the python venv (huggingface_hub snapshot_download).
-    // We keep the logic in Python to avoid re-implementing HF auth/resume.
-    let venv_py = {
-        let venv = app_data_dir(app)?.join("py-venv");
-        #[cfg(target_os = "macos")]
-        {
-            venv.join("bin").join("python")
-        }
-        #[cfg(target_os = "linux")]
-        {
-            venv.join("bin").join("python")
-        }
-        #[cfg(windows)]
-        {
-            venv.join("Scripts").join("python.exe")
+    let filename = "HY-MT1.5-1.8B-Q4_K_M.gguf";
+    let revision = "main";
+    let hf_base = resolve_hf_base(hf_endpoint_override);
+    let url = hf_resolve_file_url(&hf_base, repo, revision, filename);
+    let dest = repo_dir.join(filename);
+
+    debug_println!(
+        "[standard] downloading model (native) repo={} file={} base={} url={} ...",
+        repo,
+        filename,
+        hf_base,
+        url
+    );
+
+    let bytes = match download_url_to_file(app, &url, &dest, &hf_base).await {
+        Ok(b) => b,
+        Err(e) => {
+            let mut part_os = dest.as_os_str().to_os_string();
+            part_os.push(".part");
+            let _ = tokio::fs::remove_file(PathBuf::from(part_os)).await;
+            return Err(e);
         }
     };
-    if !venv_py.exists() {
-        return Err(format!("python venv missing: {}", venv_py.display()));
-    }
 
-    let main_py = resource_file(app, "py_app/download_model.py")?;
-
-    if !main_py.exists() {
-        return Err(format!("missing download script: {}", main_py.display()));
-    }
-
-    // We download a single GGUF file to keep footprint small.
-    // Current default: HY-MT1.5-1.8B-Q4_K_M.gguf
-    let filename = "HY-MT1.5-1.8B-Q4_K_M.gguf";
-    debug_println!(
-        "[standard] downloading model repo={} file={} ...",
-        repo,
-        filename
-    );
-    let mut cmd = tokio::process::Command::new(&venv_py);
-    cmd.env("PYTHONDONTWRITEBYTECODE", "1");
-    cmd.arg(&main_py)
-        .arg("--repo")
-        .arg(repo)
-        .arg("--out-dir")
-        .arg(&repo_dir)
-        .arg("--filename")
-        .arg(filename);
-
-    let out = cmd
-        .output()
-        .await
-        .map_err(|e| format!("spawn failed: {}", e))?;
-    if !out.status.success() {
+    if !gguf_file_ready(&dest).await {
+        let _ = tokio::fs::remove_file(&dest).await;
         return Err(format!(
-            "model download failed (code={:?})\nstdout:\n{}\nstderr:\n{}",
-            out.status.code(),
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
+            "downloaded file missing or smaller than {} MiB (got {} bytes)",
+            MIN_GGUF_BYTES / (1024 * 1024),
+            bytes
         ));
     }
 
-    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    let parsed: HfDownloadResponse =
-        serde_json::from_str(&stdout).map_err(|e| format!("failed to parse download output: {}\nraw:\n{}", e, stdout))?;
-    if !parsed.ok {
-        return Err(parsed
-            .message
-            .unwrap_or_else(|| "model download failed".to_string()));
-    }
-    if let Some(_p) = parsed.path.as_deref() {
-        debug_println!("[standard] model file saved at {}", _p);
-    }
+    debug_println!(
+        "[standard] model download finished OK ({} bytes) -> {}",
+        bytes,
+        dest.display()
+    );
 
     tokio::fs::write(&marker, "ok")
         .await
@@ -135,4 +221,3 @@ pub async fn ensure_model_downloaded(app: &tauri::AppHandle, repo: &str) -> Resu
 
     Ok(())
 }
-

@@ -11,6 +11,17 @@ use once_cell::sync::OnceCell;
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::Mutex;
 
+fn hf_endpoint_arg(hf_endpoint: &Option<String>) -> Option<&str> {
+    hf_endpoint.as_ref().and_then(|s| {
+        let t = s.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
+    })
+}
+
 fn detect_cuda_version_from_nvidia_smi(output: &str) -> Option<String> {
     for line in output.lines() {
         if let Some(idx) = line.find("CUDA Version") {
@@ -293,7 +304,7 @@ async fn run_cmd_inherit_stdio(mut cmd: tokio::process::Command) -> Result<(), S
 /// True if the venv already has packages required for Standard mode (download + inference).
 async fn venv_standard_deps_ok(vpy: &std::path::Path) -> bool {
     let mut cmd = python_cmd(vpy);
-    cmd.arg("-c").arg("import huggingface_hub; import llama_cpp");
+    cmd.arg("-c").arg("import llama_cpp");
     match cmd.output().await {
         Ok(out) => out.status.success(),
         Err(_) => false,
@@ -676,7 +687,7 @@ pub async fn ensure_python_runtime() -> Result<(), String> {
 
     let vpy = venv_python(&app)?;
     if venv_standard_deps_ok(&vpy).await {
-        debug_println!("[standard] venv dependencies ok (huggingface_hub + llama_cpp)");
+        debug_println!("[standard] venv dependencies ok (llama_cpp)");
         return Ok(());
     }
 
@@ -685,7 +696,7 @@ pub async fn ensure_python_runtime() -> Result<(), String> {
 
     if !venv_standard_deps_ok(&vpy).await {
         return Err(
-            "pip install finished but Standard mode deps are still not importable (huggingface_hub / llama_cpp). \
+            "pip install finished but Standard mode deps are still not importable (llama_cpp). \
              Check network, disk space, and pip errors above."
                 .to_string(),
         );
@@ -696,24 +707,28 @@ pub async fn ensure_python_runtime() -> Result<(), String> {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn ensure_model() -> Result<(), String> {
+pub async fn ensure_model(hf_endpoint: Option<String>) -> Result<(), String> {
     let app = APP_HANDLE
         .get()
         .ok_or_else(|| "APP_HANDLE not initialized".to_string())?
         .clone();
     ensure_python_runtime().await?;
-    ensure_model_downloaded(&app, DEFAULT_HF_REPO).await?;
+    ensure_model_downloaded(&app, DEFAULT_HF_REPO, hf_endpoint_arg(&hf_endpoint)).await?;
     Ok(())
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn standard_translate(prompt: String) -> Result<StandardTranslateResponse, String> {
+pub async fn standard_translate(
+    prompt: String,
+    hf_endpoint: Option<String>,
+) -> Result<StandardTranslateResponse, String> {
     let app = APP_HANDLE
         .get()
         .ok_or_else(|| "APP_HANDLE not initialized".to_string())?
         .clone();
-    ensure_model().await?;
+    ensure_python_runtime().await?;
+    ensure_model_downloaded(&app, DEFAULT_HF_REPO, hf_endpoint_arg(&hf_endpoint)).await?;
     debug_println!("[standard] translate prompt_len={}", prompt.len());
     let text = daemon_translate(&app, &prompt).await?;
     Ok(StandardTranslateResponse { text })

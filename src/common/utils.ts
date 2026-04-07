@@ -91,6 +91,7 @@ const settingKeys: Record<keyof ISettings, number> = {
     ollamaAPIModel: 1,
     ollamaCustomModelName: 1,
     ollamaModelLifetimeInMemory: 1,
+    hfEndpoint: 1,
     groqAPIURL: 1,
     groqAPIURLPath: 1,
     groqAPIModel: 1,
@@ -241,6 +242,9 @@ export async function getSettings(): Promise<ISettings> {
     }
     if (settings.ollamaModelLifetimeInMemory === undefined || settings.ollamaModelLifetimeInMemory === null) {
         settings.ollamaModelLifetimeInMemory = '5m'
+    }
+    if (settings.hfEndpoint === undefined || settings.hfEndpoint === null) {
+        settings.hfEndpoint = ''
     }
     return settings
 }
