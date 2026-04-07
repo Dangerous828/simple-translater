@@ -1,3 +1,3 @@
+# Model download is handled by the Tauri app (Rust + reqwest), not Python.
 # llama-cpp-python is installed separately by the app (prebuilt wheels / CUDA) to avoid
 # pip falling back to the sdist on Windows, which requires CMake and often fails.
-huggingface_hub>=0.22.0

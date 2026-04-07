@@ -122,6 +122,8 @@ export interface ISettings {
     ollamaAPIModel: string
     ollamaCustomModelName: string
     ollamaModelLifetimeInMemory: string
+    /** Hugging Face 下载基址（如 https://hf-mirror.com）；留空则用官方 huggingface.co 或系统环境变量 HF_ENDPOINT */
+    hfEndpoint?: string
     groqAPIURL: string
     groqAPIURLPath: string
     groqAPIModel: string

@@ -43,17 +43,27 @@ export const commands = {
             else return { status: 'error', error: e as any }
         }
     },
-    async ensureModel(): Promise<Result<null, string>> {
+    async ensureModel(hfEndpoint?: string | null): Promise<Result<null, string>> {
         try {
-            return { status: 'ok', data: await TAURI_INVOKE('ensure_model') }
+            const ep =
+                hfEndpoint !== undefined && hfEndpoint !== null && hfEndpoint.trim() !== '' ? hfEndpoint.trim() : null
+            return { status: 'ok', data: await TAURI_INVOKE('ensure_model', { hfEndpoint: ep }) }
         } catch (e) {
             if (e instanceof Error) throw e
             else return { status: 'error', error: e as any }
         }
     },
-    async standardTranslate(prompt: string): Promise<Result<StandardTranslateResponse, string>> {
+    async standardTranslate(
+        prompt: string,
+        hfEndpoint?: string | null
+    ): Promise<Result<StandardTranslateResponse, string>> {
         try {
-            return { status: 'ok', data: await TAURI_INVOKE('standard_translate', { prompt }) }
+            const ep =
+                hfEndpoint !== undefined && hfEndpoint !== null && hfEndpoint.trim() !== '' ? hfEndpoint.trim() : null
+            return {
+                status: 'ok',
+                data: await TAURI_INVOKE('standard_translate', { prompt, hfEndpoint: ep }),
+            }
         } catch (e) {
             if (e instanceof Error) throw e
             else return { status: 'error', error: e as any }
