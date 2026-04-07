@@ -683,6 +683,12 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
                             )}
                             <div className={styles.help}>
                                 如果你打包了内置 Python，此按钮会创建 venv 并安装依赖；随后下载模型。
+                                {stdPreparing ? (
+                                    <div style={{ marginTop: 6 }}>
+                                        pip 与下载的详细进度会打印在<strong>启动本应用的终端</strong>
+                                        （例如运行 <code style={{ fontSize: 12 }}>pnpm dev-tauri</code> 的那个窗口），界面里只会显示阶段提示。
+                                    </div>
+                                ) : null}
                             </div>
                         </div>
                     </div>

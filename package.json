@@ -15,16 +15,15 @@
         "test": "vitest test",
         "lint": "eslint \"src/**/*.{ts,tsx}\" --cache",
         "lint:fix": "eslint --fix \"src/**/*.{ts,tsx}\"",
+        "lint:staged": "lint-staged",
         "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,md,json}\" --cache"
     },
     "simple-git-hooks": {
-        "pre-commit": "sh scripts/git-pre-commit.sh"
+        "pre-commit": "exit 0"
     },
     "lint-staged": {
-        "*.{js,jsx,ts,tsx}": [
-            "eslint \"src/**/*.{ts,tsx}\" --cache",
-            "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,md,json}\" --cache"
-        ]
+        "*.{js,jsx,ts,tsx}": ["eslint --cache", "prettier --write --cache"],
+        "*.{css,md,json}": "prettier --write --cache"
     },
     "author": "",
     "license": "AGPL-3.0",

@@ -47,19 +47,29 @@ async fn try_detect_cuda_version() -> Option<String> {
     detect_cuda_version_from_nvidia_smi(&text)
 }
 
-#[allow(dead_code)]
+/// Prebuilt CUDA wheels (jllllll index). Newer driver reports (e.g. 12.6) fall back to the newest
+/// CUDA tag published here (`cu122`), since pip cannot use a non-existent index.
 fn cuda_extra_index_url(version: &str) -> Option<&'static str> {
+    if version.starts_with("11.6") {
+        return Some("https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu116");
+    }
+    if version.starts_with("11.7") {
+        return Some("https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu117");
+    }
+    if version.starts_with("11.8") {
+        return Some("https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu118");
+    }
+    if version.starts_with("12.0") {
+        return Some("https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu120");
+    }
     if version.starts_with("12.1") {
-        return Some("https://abetlen.github.io/llama-cpp-python/whl/cu121");
+        return Some("https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu121");
     }
-    if version.starts_with("12.2") {
-        return Some("https://abetlen.github.io/llama-cpp-python/whl/cu122");
-    }
-    if version.starts_with("12.3") {
-        return Some("https://abetlen.github.io/llama-cpp-python/whl/cu123");
-    }
-    if version.starts_with("12.4") {
-        return Some("https://abetlen.github.io/llama-cpp-python/whl/cu124");
+    if version.starts_with("12.2") || version.starts_with("12.3") || version.starts_with("12.4")
+        || version.starts_with("12.5") || version.starts_with("12.6") || version.starts_with("12.7")
+        || version.starts_with("12.8")
+    {
+        return Some("https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu122");
     }
     None
 }
@@ -262,6 +272,24 @@ async fn run_cmd(mut cmd: tokio::process::Command) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
+/// Long-running installs: stream stdout/stderr to the parent process (visible in the terminal
+/// where `tauri dev` / the app was started). The UI invoke has no live log otherwise.
+async fn run_cmd_inherit_stdio(mut cmd: tokio::process::Command) -> Result<(), String> {
+    use std::process::Stdio;
+    cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    let status = cmd
+        .status()
+        .await
+        .map_err(|e| format!("spawn failed: {}", e))?;
+    if !status.success() {
+        return Err(format!(
+            "command failed (code={:?}) — see terminal output above",
+            status.code()
+        ));
+    }
+    Ok(())
+}
+
 /// True if the venv already has packages required for Standard mode (download + inference).
 async fn venv_standard_deps_ok(vpy: &std::path::Path) -> bool {
     let mut cmd = python_cmd(vpy);
@@ -321,7 +349,7 @@ async fn ensure_venv_has_pip(app: &tauri::AppHandle, vpy: &std::path::Path) -> R
     debug_println!("[standard] running bootstrap_pip.py (downloads get-pip.py; requires network)");
     let mut boot = python_cmd(vpy);
     boot.arg(&script);
-    run_cmd(boot).await?;
+    run_cmd_inherit_stdio(boot).await?;
 
     let mut probe3 = python_cmd(vpy);
     probe3.args(["-m", "pip", "--version"]);
@@ -338,6 +366,47 @@ async fn ensure_venv_has_pip(app: &tauri::AppHandle, vpy: &std::path::Path) -> R
     Ok(())
 }
 
+/// Install `llama-cpp-python` from prebuilt wheels only (PyPI sdist needs CMake + llama.cpp build).
+/// `package_req` is a pip requirement (e.g. `llama-cpp-python==0.2.26`). Pin the version so pip does
+/// not prefer a newer PyPI sdist over third-party wheels.
+async fn install_llama_cpp_via_wheels(
+    vpy: &std::path::Path,
+    package_req: &str,
+    extra_index_url: &str,
+) -> Result<(), String> {
+    debug_println!(
+        "[standard] installing {} (prefer binary wheels, extra-index-url={})",
+        package_req,
+        extra_index_url
+    );
+    let mut cmd = python_cmd(vpy);
+    cmd.arg("-m")
+        .arg("pip")
+        .arg("install")
+        .arg("--upgrade")
+        .arg("--prefer-binary")
+        .arg(package_req)
+        .arg("--extra-index-url")
+        .arg(extra_index_url);
+    run_cmd_inherit_stdio(cmd).await
+}
+
+/// macOS: abetlen’s GitHub Pages wheel index is gone; jllllll publishes Metal wheels as release assets.
+async fn install_llama_cpp_macos_from_release_wheel(vpy: &std::path::Path, wheel_url: &str) -> Result<(), String> {
+    debug_println!(
+        "[standard] installing llama-cpp-python from prebuilt wheel ({})",
+        wheel_url
+    );
+    let mut cmd = python_cmd(vpy);
+    cmd.arg("-m")
+        .arg("pip")
+        .arg("install")
+        .arg("--upgrade")
+        .arg("--prefer-binary")
+        .arg(wheel_url);
+    run_cmd_inherit_stdio(cmd).await
+}
+
 async fn install_venv_pip_dependencies(app: &tauri::AppHandle, vpy: &std::path::Path) -> Result<(), String> {
     ensure_venv_has_pip(app, vpy).await?;
 
@@ -346,7 +415,7 @@ async fn install_venv_pip_dependencies(app: &tauri::AppHandle, vpy: &std::path::
         return Err(format!("missing requirements at {}", req_file.display()));
     }
 
-    debug_println!("[standard] pip install / upgrade (requirements.txt)");
+    debug_println!("[standard] pip install / upgrade (requirements.txt) — logging to terminal");
 
     let mut pip_cmd = python_cmd(vpy);
     pip_cmd
@@ -355,23 +424,25 @@ async fn install_venv_pip_dependencies(app: &tauri::AppHandle, vpy: &std::path::
         .arg("install")
         .arg("--upgrade")
         .arg("pip");
-    run_cmd(pip_cmd).await?;
+    run_cmd_inherit_stdio(pip_cmd).await?;
 
     let mut install_cmd = python_cmd(vpy);
     install_cmd
         .arg("-m")
         .arg("pip")
         .arg("install")
+        .arg("--prefer-binary")
         .arg("-r")
         .arg(&req_file);
-    run_cmd(install_cmd).await?;
+    run_cmd_inherit_stdio(install_cmd).await?;
 
     #[cfg(any(windows, target_os = "linux"))]
     {
+        let mut llama_ok = false;
         if let Some(cuda_ver) = try_detect_cuda_version().await {
             if let Some(extra) = cuda_extra_index_url(&cuda_ver) {
                 debug_println!(
-                    "[standard] detected CUDA {} -> trying llama-cpp-python CUDA wheel (extra-index-url={})",
+                    "[standard] detected CUDA {} -> llama-cpp-python CUDA wheel (extra-index-url={})",
                     cuda_ver,
                     extra
                 );
@@ -381,17 +452,52 @@ async fn install_venv_pip_dependencies(app: &tauri::AppHandle, vpy: &std::path::
                     .arg("pip")
                     .arg("install")
                     .arg("--upgrade")
+                    .arg("--prefer-binary")
                     .arg("--force-reinstall")
-                    .arg("llama-cpp-python")
+                    .arg("llama-cpp-python==0.2.9")
                     .arg("--extra-index-url")
                     .arg(extra);
-                let _ = run_cmd(cuda_cmd).await;
+                match run_cmd_inherit_stdio(cuda_cmd).await {
+                    Ok(()) => llama_ok = true,
+                    Err(e) => debug_println!(
+                        "[standard] CUDA llama-cpp-python install failed (will try CPU wheels): {}",
+                        e
+                    ),
+                }
             } else {
                 debug_println!(
                     "[standard] detected CUDA {}, but no mapped llama-cpp-python wheel index",
                     cuda_ver
                 );
             }
+        }
+        if !llama_ok {
+            install_llama_cpp_via_wheels(
+                vpy,
+                "llama-cpp-python==0.2.26",
+                "https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cpu",
+            )
+            .await?;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        #[cfg(target_arch = "aarch64")]
+        {
+            install_llama_cpp_macos_from_release_wheel(
+                vpy,
+                "https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels/releases/download/metal/llama_cpp_python-0.2.26-cp311-cp311-macosx_12_0_arm64.whl",
+            )
+            .await?;
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            install_llama_cpp_macos_from_release_wheel(
+                vpy,
+                "https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels/releases/download/metal/llama_cpp_python-0.2.26-cp311-cp311-macosx_12_0_x86_64.whl",
+            )
+            .await?;
         }
     }
 
@@ -561,7 +667,7 @@ pub async fn ensure_python_runtime() -> Result<(), String> {
 
         let mut cmd = python_cmd(&py);
         cmd.arg("-m").arg("venv").arg(&venv);
-        run_cmd(cmd).await?;
+        run_cmd_inherit_stdio(cmd).await?;
     } else {
         debug_println!("[standard] venv exists: {}", vpy.display());
     }
