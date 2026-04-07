@@ -253,6 +253,74 @@ async fn run_cmd(mut cmd: tokio::process::Command) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
+/// True if the venv already has packages required for Standard mode (download + inference).
+async fn venv_standard_deps_ok(vpy: &std::path::Path) -> bool {
+    let mut cmd = tokio::process::Command::new(vpy);
+    cmd.arg("-c").arg("import huggingface_hub; import llama_cpp");
+    match cmd.output().await {
+        Ok(out) => out.status.success(),
+        Err(_) => false,
+    }
+}
+
+async fn install_venv_pip_dependencies(app: &tauri::AppHandle, vpy: &std::path::Path) -> Result<(), String> {
+    let req_file = python_app_dir(app)?.join("requirements.txt");
+    if !req_file.exists() {
+        return Err(format!("missing requirements at {}", req_file.display()));
+    }
+
+    debug_println!("[standard] pip install / upgrade (requirements.txt)");
+
+    let mut pip_cmd = tokio::process::Command::new(vpy);
+    pip_cmd
+        .arg("-m")
+        .arg("pip")
+        .arg("install")
+        .arg("--upgrade")
+        .arg("pip");
+    run_cmd(pip_cmd).await?;
+
+    let mut install_cmd = tokio::process::Command::new(vpy);
+    install_cmd
+        .arg("-m")
+        .arg("pip")
+        .arg("install")
+        .arg("-r")
+        .arg(&req_file);
+    run_cmd(install_cmd).await?;
+
+    #[cfg(any(windows, target_os = "linux"))]
+    {
+        if let Some(cuda_ver) = try_detect_cuda_version().await {
+            if let Some(extra) = cuda_extra_index_url(&cuda_ver) {
+                debug_println!(
+                    "[standard] detected CUDA {} -> trying llama-cpp-python CUDA wheel (extra-index-url={})",
+                    cuda_ver,
+                    extra
+                );
+                let mut cuda_cmd = tokio::process::Command::new(vpy);
+                cuda_cmd
+                    .arg("-m")
+                    .arg("pip")
+                    .arg("install")
+                    .arg("--upgrade")
+                    .arg("--force-reinstall")
+                    .arg("llama-cpp-python")
+                    .arg("--extra-index-url")
+                    .arg(extra);
+                let _ = run_cmd(cuda_cmd).await;
+            } else {
+                debug_println!(
+                    "[standard] detected CUDA {}, but no mapped llama-cpp-python wheel index",
+                    cuda_ver
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn ensure_daemon(app: &tauri::AppHandle) -> Result<(), String> {
     let mutex = PY_DAEMON.get_or_init(|| Mutex::new(None));
 
@@ -405,78 +473,37 @@ pub async fn ensure_python_runtime() -> Result<(), String> {
         ));
     }
 
-    let venv_py = venv_python(&app)?;
-    if venv_py.exists() {
-        debug_println!("[standard] venv ok: {}", venv_py.display());
+    let venv = venv_dir(&app)?;
+    let vpy = venv_python(&app)?;
+
+    if !vpy.exists() {
+        debug_println!("[standard] creating venv at {}", venv.display());
+        tokio::fs::create_dir_all(&venv)
+            .await
+            .map_err(|e| format!("failed to create venv dir: {}", e))?;
+
+        let mut cmd = tokio::process::Command::new(py);
+        cmd.arg("-m").arg("venv").arg(&venv);
+        run_cmd(cmd).await?;
+    } else {
+        debug_println!("[standard] venv exists: {}", vpy.display());
+    }
+
+    let vpy = venv_python(&app)?;
+    if venv_standard_deps_ok(&vpy).await {
+        debug_println!("[standard] venv dependencies ok (huggingface_hub + llama_cpp)");
         return Ok(());
     }
 
-    let venv = venv_dir(&app)?;
-    debug_println!("[standard] creating venv at {}", venv.display());
-    tokio::fs::create_dir_all(&venv)
-        .await
-        .map_err(|e| format!("failed to create venv dir: {}", e))?;
+    debug_println!("[standard] venv missing or incomplete deps; running pip install -r");
+    install_venv_pip_dependencies(&app, &vpy).await?;
 
-    // Create venv: python -m venv <dir>
-    let mut cmd = tokio::process::Command::new(py);
-    cmd.arg("-m").arg("venv").arg(&venv);
-    run_cmd(cmd).await?;
-
-    // Upgrade pip and install requirements (online for now; we will document offline wheels later)
-    let vpy = venv_python(&app)?;
-    debug_println!("[standard] installing python deps via pip");
-
-    let req_file = python_app_dir(&app)?.join("requirements.txt");
-    if !req_file.exists() {
-        return Err(format!("missing requirements at {}", req_file.display()));
-    }
-
-    let mut pip_cmd = tokio::process::Command::new(&vpy);
-    pip_cmd
-        .arg("-m")
-        .arg("pip")
-        .arg("install")
-        .arg("--upgrade")
-        .arg("pip");
-    let _ = run_cmd(pip_cmd).await?;
-
-    let mut install_cmd = tokio::process::Command::new(&vpy);
-    install_cmd
-        .arg("-m")
-        .arg("pip")
-        .arg("install")
-        .arg("-r")
-        .arg(&req_file);
-    let _ = run_cmd(install_cmd).await?;
-
-    // Optional CUDA wheel (Windows/Linux): if NVIDIA is present, try to install a CUDA-enabled wheel.
-    #[cfg(any(windows, target_os = "linux"))]
-    {
-        if let Some(cuda_ver) = try_detect_cuda_version().await {
-            if let Some(extra) = cuda_extra_index_url(&cuda_ver) {
-                debug_println!(
-                    "[standard] detected CUDA {} -> trying llama-cpp-python CUDA wheel (extra-index-url={})",
-                    cuda_ver,
-                    extra
-                );
-                let mut cuda_cmd = tokio::process::Command::new(&vpy);
-                cuda_cmd
-                    .arg("-m")
-                    .arg("pip")
-                    .arg("install")
-                    .arg("--upgrade")
-                    .arg("--force-reinstall")
-                    .arg("llama-cpp-python")
-                    .arg("--extra-index-url")
-                    .arg(extra);
-                let _ = run_cmd(cuda_cmd).await;
-            } else {
-                debug_println!(
-                    "[standard] detected CUDA {}, but no mapped llama-cpp-python wheel index",
-                    cuda_ver
-                );
-            }
-        }
+    if !venv_standard_deps_ok(&vpy).await {
+        return Err(
+            "pip install finished but Standard mode deps are still not importable (huggingface_hub / llama_cpp). \
+             Check network, disk space, and pip errors above."
+                .to_string(),
+        );
     }
 
     Ok(())
