@@ -459,10 +459,12 @@ async fn install_venv_pip_dependencies(app: &tauri::AppHandle, vpy: &std::path::
                     .arg(extra);
                 match run_cmd_inherit_stdio(cuda_cmd).await {
                     Ok(()) => llama_ok = true,
-                    Err(e) => debug_println!(
-                        "[standard] CUDA llama-cpp-python install failed (will try CPU wheels): {}",
-                        e
-                    ),
+                    Err(e) => {
+                        debug_println!(
+                            "[standard] CUDA llama-cpp-python install failed (will try CPU wheels): {}",
+                            e
+                        );
+                    }
                 }
             } else {
                 debug_println!(
