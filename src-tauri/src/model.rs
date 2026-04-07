@@ -95,6 +95,7 @@ pub async fn ensure_model_downloaded(app: &tauri::AppHandle, repo: &str) -> Resu
         filename
     );
     let mut cmd = tokio::process::Command::new(&venv_py);
+    cmd.env("PYTHONDONTWRITEBYTECODE", "1");
     cmd.arg(&main_py)
         .arg("--repo")
         .arg(repo)

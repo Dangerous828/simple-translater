@@ -26,6 +26,15 @@ fn detect_cuda_version_from_nvidia_smi(output: &str) -> Option<String> {
     None
 }
 
+/// Run embedded or venv Python without writing `.pyc` next to the bundled stdlib under
+/// `resources/py`. Otherwise `tauri dev`’s watcher sees `__pycache__` changes and rebuilds in a loop,
+/// interrupting venv setup / model download.
+fn python_cmd(program: &std::path::Path) -> tokio::process::Command {
+    let mut c = tokio::process::Command::new(program);
+    c.env("PYTHONDONTWRITEBYTECODE", "1");
+    c
+}
+
 async fn try_detect_cuda_version() -> Option<String> {
     let out = tokio::process::Command::new("nvidia-smi")
         .output()
@@ -57,7 +66,7 @@ fn cuda_extra_index_url(version: &str) -> Option<&'static str> {
 
 async fn llama_system_info(app: &tauri::AppHandle) -> Result<String, String> {
     let vpy = venv_python(app)?;
-    let mut cmd = tokio::process::Command::new(&vpy);
+    let mut cmd = python_cmd(&vpy);
     cmd.arg("-c").arg(
         "from llama_cpp import llama_cpp as lc; import sys; sys.stdout.write(lc.llama_print_system_info())",
     );
@@ -255,7 +264,7 @@ async fn run_cmd(mut cmd: tokio::process::Command) -> Result<String, String> {
 
 /// True if the venv already has packages required for Standard mode (download + inference).
 async fn venv_standard_deps_ok(vpy: &std::path::Path) -> bool {
-    let mut cmd = tokio::process::Command::new(vpy);
+    let mut cmd = python_cmd(vpy);
     cmd.arg("-c").arg("import huggingface_hub; import llama_cpp");
     match cmd.output().await {
         Ok(out) => out.status.success(),
@@ -266,7 +275,7 @@ async fn venv_standard_deps_ok(vpy: &std::path::Path) -> bool {
 /// Embedded / stripped CPython venvs often ship without `pip`; `ensurepip` may fix it,
 /// otherwise we run `bootstrap_pip.py` (downloads get-pip.py; needs network).
 async fn ensure_venv_has_pip(app: &tauri::AppHandle, vpy: &std::path::Path) -> Result<(), String> {
-    let mut probe = tokio::process::Command::new(vpy);
+    let mut probe = python_cmd(vpy);
     probe.args(["-m", "pip", "--version"]);
     let out = probe
         .output()
@@ -277,7 +286,7 @@ async fn ensure_venv_has_pip(app: &tauri::AppHandle, vpy: &std::path::Path) -> R
     }
 
     debug_println!("[standard] venv has no pip; trying ensurepip");
-    let mut ens = tokio::process::Command::new(vpy);
+    let mut ens = python_cmd(vpy);
     ens.args(["-m", "ensurepip", "--upgrade", "--default-pip"]);
     let ens_out = ens
         .output()
@@ -291,7 +300,7 @@ async fn ensure_venv_has_pip(app: &tauri::AppHandle, vpy: &std::path::Path) -> R
         );
     }
 
-    let mut probe2 = tokio::process::Command::new(vpy);
+    let mut probe2 = python_cmd(vpy);
     probe2.args(["-m", "pip", "--version"]);
     let out2 = probe2
         .output()
@@ -310,11 +319,11 @@ async fn ensure_venv_has_pip(app: &tauri::AppHandle, vpy: &std::path::Path) -> R
     }
 
     debug_println!("[standard] running bootstrap_pip.py (downloads get-pip.py; requires network)");
-    let mut boot = tokio::process::Command::new(vpy);
+    let mut boot = python_cmd(vpy);
     boot.arg(&script);
     run_cmd(boot).await?;
 
-    let mut probe3 = tokio::process::Command::new(vpy);
+    let mut probe3 = python_cmd(vpy);
     probe3.args(["-m", "pip", "--version"]);
     let out3 = probe3
         .output()
@@ -339,7 +348,7 @@ async fn install_venv_pip_dependencies(app: &tauri::AppHandle, vpy: &std::path::
 
     debug_println!("[standard] pip install / upgrade (requirements.txt)");
 
-    let mut pip_cmd = tokio::process::Command::new(vpy);
+    let mut pip_cmd = python_cmd(vpy);
     pip_cmd
         .arg("-m")
         .arg("pip")
@@ -348,7 +357,7 @@ async fn install_venv_pip_dependencies(app: &tauri::AppHandle, vpy: &std::path::
         .arg("pip");
     run_cmd(pip_cmd).await?;
 
-    let mut install_cmd = tokio::process::Command::new(vpy);
+    let mut install_cmd = python_cmd(vpy);
     install_cmd
         .arg("-m")
         .arg("pip")
@@ -366,7 +375,7 @@ async fn install_venv_pip_dependencies(app: &tauri::AppHandle, vpy: &std::path::
                     cuda_ver,
                     extra
                 );
-                let mut cuda_cmd = tokio::process::Command::new(vpy);
+                let mut cuda_cmd = python_cmd(vpy);
                 cuda_cmd
                     .arg("-m")
                     .arg("pip")
@@ -441,7 +450,7 @@ async fn ensure_daemon(app: &tauri::AppHandle) -> Result<(), String> {
     let cuda_available = backend.to_ascii_lowercase().contains("cuda");
     let detected_cuda_version = try_detect_cuda_version().await.unwrap_or_default();
 
-    let mut cmd = tokio::process::Command::new(&vpy);
+    let mut cmd = python_cmd(&vpy);
     cmd.arg(&server_py)
         .env("STD_MODEL_PATH", &model_path_str)
         .env("STD_THREADS", threads.to_string())
@@ -550,7 +559,7 @@ pub async fn ensure_python_runtime() -> Result<(), String> {
             .await
             .map_err(|e| format!("failed to create venv dir: {}", e))?;
 
-        let mut cmd = tokio::process::Command::new(py);
+        let mut cmd = python_cmd(&py);
         cmd.arg("-m").arg("venv").arg(&venv);
         run_cmd(cmd).await?;
     } else {
@@ -615,7 +624,19 @@ pub async fn standard_status() -> Result<StandardStatusResponse, String> {
         .join("models")
         .join(DEFAULT_HF_REPO.replace('/', "__"));
     let model_path = repo_dir.join(DEFAULT_GGUF_FILENAME);
-    let model_ready = model_path.exists() || repo_dir.join(".downloaded").exists();
+    let marker = repo_dir.join(".downloaded");
+    // Do not treat a tiny/partial file as ready (dev rebuilds used to interrupt HF download).
+    const MIN_GGUF_BYTES: u64 = 100 * 1024 * 1024;
+    let model_ready = if marker.exists() {
+        true
+    } else if model_path.exists() {
+        tokio::fs::metadata(&model_path)
+            .await
+            .map(|m| m.len() >= MIN_GGUF_BYTES)
+            .unwrap_or(false)
+    } else {
+        false
+    };
 
     Ok(StandardStatusResponse {
         python_ready,
