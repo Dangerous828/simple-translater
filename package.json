@@ -18,7 +18,7 @@
         "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,md,json}\" --cache"
     },
     "simple-git-hooks": {
-        "pre-commit": "node ./node_modules/lint-staged/bin/lint-staged.js"
+        "pre-commit": "sh scripts/git-pre-commit.sh"
     },
     "lint-staged": {
         "*.{js,jsx,ts,tsx}": [
