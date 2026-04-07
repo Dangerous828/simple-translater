@@ -263,7 +263,75 @@ async fn venv_standard_deps_ok(vpy: &std::path::Path) -> bool {
     }
 }
 
+/// Embedded / stripped CPython venvs often ship without `pip`; `ensurepip` may fix it,
+/// otherwise we run `bootstrap_pip.py` (downloads get-pip.py; needs network).
+async fn ensure_venv_has_pip(app: &tauri::AppHandle, vpy: &std::path::Path) -> Result<(), String> {
+    let mut probe = tokio::process::Command::new(vpy);
+    probe.args(["-m", "pip", "--version"]);
+    let out = probe
+        .output()
+        .await
+        .map_err(|e| format!("failed to run venv python: {}", e))?;
+    if out.status.success() {
+        return Ok(());
+    }
+
+    debug_println!("[standard] venv has no pip; trying ensurepip");
+    let mut ens = tokio::process::Command::new(vpy);
+    ens.args(["-m", "ensurepip", "--upgrade", "--default-pip"]);
+    let ens_out = ens
+        .output()
+        .await
+        .map_err(|e| format!("ensurepip spawn failed: {}", e))?;
+    if !ens_out.status.success() {
+        debug_println!(
+            "[standard] ensurepip exit={:?} stderr={}",
+            ens_out.status.code(),
+            String::from_utf8_lossy(&ens_out.stderr).trim()
+        );
+    }
+
+    let mut probe2 = tokio::process::Command::new(vpy);
+    probe2.args(["-m", "pip", "--version"]);
+    let out2 = probe2
+        .output()
+        .await
+        .map_err(|e| format!("pip probe after ensurepip: {}", e))?;
+    if out2.status.success() {
+        return Ok(());
+    }
+
+    let script = python_app_dir(app)?.join("bootstrap_pip.py");
+    if !script.exists() {
+        return Err(
+            "venv has no pip and ensurepip did not help; missing resources/py_app/bootstrap_pip.py"
+                .to_string(),
+        );
+    }
+
+    debug_println!("[standard] running bootstrap_pip.py (downloads get-pip.py; requires network)");
+    let mut boot = tokio::process::Command::new(vpy);
+    boot.arg(&script);
+    run_cmd(boot).await?;
+
+    let mut probe3 = tokio::process::Command::new(vpy);
+    probe3.args(["-m", "pip", "--version"]);
+    let out3 = probe3
+        .output()
+        .await
+        .map_err(|e| format!("pip probe after bootstrap: {}", e))?;
+    if !out3.status.success() {
+        return Err(
+            "pip is still unavailable. Delete the app data Python venv folder (see Settings / logs path) and retry on a network that can reach bootstrap.pypa.io."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 async fn install_venv_pip_dependencies(app: &tauri::AppHandle, vpy: &std::path::Path) -> Result<(), String> {
+    ensure_venv_has_pip(app, vpy).await?;
+
     let req_file = python_app_dir(app)?.join("requirements.txt");
     if !req_file.exists() {
         return Err(format!("missing requirements at {}", req_file.display()));
