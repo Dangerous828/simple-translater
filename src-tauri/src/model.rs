@@ -26,6 +26,18 @@ fn resource_file(app: &tauri::AppHandle, rel: &str) -> Result<std::path::PathBuf
         return Ok(p1);
     }
     let p2 = rd.join("resources").join(rel);
+    if p2.exists() {
+        return Ok(p2);
+    }
+    #[cfg(debug_assertions)]
+    {
+        let p3 = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join(rel);
+        if p3.exists() {
+            return Ok(p3);
+        }
+    }
     Ok(p2)
 }
 

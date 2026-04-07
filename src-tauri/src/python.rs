@@ -129,24 +129,48 @@ fn resources_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
         .map_err(|e| format!("failed to resolve resource_dir: {}", e))
 }
 
-fn python_runtime_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+/// Resolve `src-tauri/resources/<name>` (e.g. `py`, `py_app`) for bundled files.
+/// Order: Tauri `resource_dir()/name`, then `resource_dir()/resources/name` (some layouts),
+/// then in **debug builds only** `CARGO_MANIFEST_DIR/resources/name` so `tauri dev` works
+/// when the CLI has not copied large bundles into `target/debug/resources`.
+fn bundled_resources_subdir(app: &tauri::AppHandle, name: &str) -> Result<std::path::PathBuf, String> {
     let rd = resources_dir(app)?;
-    // In `tauri dev`, resources often live under `<target>/debug/resources/*`.
-    // In bundles, they are typically under the resolved resource dir root.
-    let p1 = rd.join("py");
-    if p1.exists() {
-        return Ok(p1);
+    let a = rd.join(name);
+    if a.exists() {
+        return Ok(a);
     }
-    Ok(rd.join("resources").join("py"))
+    let b = rd.join("resources").join(name);
+    if b.exists() {
+        return Ok(b);
+    }
+    #[cfg(debug_assertions)]
+    {
+        let c = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join(name);
+        if c.exists() {
+            debug_println!(
+                "[standard] dev resource fallback for {:?}: {}",
+                name,
+                c.display()
+            );
+            return Ok(c);
+        }
+    }
+    Err(format!(
+        "bundle directory {:?} not found under {} (debug fallback: src-tauri/resources/{})",
+        name,
+        rd.display(),
+        name
+    ))
+}
+
+fn python_runtime_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    bundled_resources_subdir(app, "py")
 }
 
 fn python_app_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let rd = resources_dir(app)?;
-    let p1 = rd.join("py_app");
-    if p1.exists() {
-        return Ok(p1);
-    }
-    Ok(rd.join("resources").join("py_app"))
+    bundled_resources_subdir(app, "py_app")
 }
 
 fn python_bin(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
