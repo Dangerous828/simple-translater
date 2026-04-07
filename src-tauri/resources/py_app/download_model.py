@@ -4,6 +4,19 @@ import os
 import sys
 import time
 
+# Rust reads this after the process exits (stdout may be mixed with hub logs).
+RESULT_NAME = ".hf_download_result.json"
+
+
+def _write_result(out_dir: str, payload: dict) -> None:
+    path = os.path.join(out_dir, RESULT_NAME)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
 
 def _close_hf_http_session() -> None:
     """After a dropped connection (e.g. WinError 10054), a shared httpx client may stay closed."""
@@ -38,6 +51,8 @@ def main() -> int:
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
+    # tqdm/progress → stderr; keep bars off to reduce noise when stderr is inherited.
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
     max_attempts = int(os.environ.get("HF_DOWNLOAD_RETRIES", "8"))
     base_delay = float(os.environ.get("HF_DOWNLOAD_RETRY_DELAY", "2"))
@@ -46,7 +61,11 @@ def main() -> int:
     for attempt in range(1, max_attempts + 1):
         try:
             target = _hf_download(args.repo, args.filename, args.out_dir)
-            print(json.dumps({"ok": True, "path": target}))
+            if not os.path.isfile(target):
+                raise RuntimeError(f"hub reported path is not a file: {target}")
+            payload = {"ok": True, "path": target}
+            _write_result(args.out_dir, payload)
+            print(json.dumps(payload), flush=True)
             return 0
         except BaseException as e:
             last_err = e
@@ -65,7 +84,9 @@ def main() -> int:
             " 网络不稳定或无法直连 Hugging Face 时，可将系统环境变量 HF_ENDPOINT 设为镜像地址"
             "（例如 https://hf-mirror.com）后重试。"
         )
-    print(json.dumps({"ok": False, "message": msg + extra}, ensure_ascii=False))
+    payload = {"ok": False, "message": msg + extra}
+    _write_result(args.out_dir, payload)
+    print(json.dumps(payload, ensure_ascii=False), flush=True)
     return 1
 
 
