@@ -90,20 +90,26 @@ pub async fn show_translator_window_with_selected_text_command() {
         .unwrap_or(false);
     let read_selected_text = || -> String {
         match get_selected_text() {
-            Ok(text) => text,
+            Ok(text) => {
+                eprintln!("[translator] get_selected_text OK: len={}, text={:?}", text.len(), &text[..text.len().min(50)]);
+                text
+            }
             Err(e) => {
-                eprintln!("Error getting selected text natively: {}", e);
+                eprintln!("[translator] get_selected_text FAILED: {}", e);
                 String::new()
             }
         }
     };
 
     let selected_text = read_selected_text();
+    eprintln!("[translator] selected_text is_empty={}", selected_text.trim().is_empty());
 
     // Show the translator window only after we've captured the current selection.
     let window = show_translator_window(false, true, true);
 
     if !selected_text.trim().is_empty() {
+        // Small delay to ensure the frontend event listener is ready after window show.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         utils::send_text(selected_text);
     }
 

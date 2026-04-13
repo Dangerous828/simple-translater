@@ -13,9 +13,25 @@ def guess_langs_from_prompt(prompt: str) -> Dict[str, str]:
 
 
 def extract_text_from_prompt(prompt: str) -> str:
-    if "\n\n" in prompt:
-        return prompt.split("\n\n", 1)[1].strip()
-    return prompt.strip()
+    """Take user/source text after the first blank line following role instructions.
+
+    Plain translate sends: role, blank line, then <text> only.
+    Other modes may prefix the tail with 'Only reply the result...'; strip that so the model
+    does not treat English instructions as translatable source.
+    """
+    if "\n\n" not in prompt:
+        return prompt.strip()
+    rest = prompt.split("\n\n", 1)[1].strip()
+    prefix = "Only reply the result and nothing else."
+    if rest.startswith(prefix):
+        # \"... ${commandPrompt}:\\n\\n${content}\" — content starts after first \":\\n\" block
+        for sep in (":\n\n", ":\n"):
+            i = rest.find(sep, len(prefix))
+            if i != -1:
+                tail = rest[i + len(sep) :].strip()
+                if tail:
+                    return tail
+    return rest
 
 def calc_max_tokens(text: str) -> int:
     # Rough heuristic: translation output length is usually bounded by input length.
