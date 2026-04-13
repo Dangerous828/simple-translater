@@ -246,6 +246,15 @@ export async function getSettings(): Promise<ISettings> {
     if (settings.hfEndpoint === undefined || settings.hfEndpoint === null) {
         settings.hfEndpoint = ''
     }
+    // Desktop: config.json 初始为 {} 时若无 hotkey，全局划词快捷键永远不会注册（与设置页占位一致）。
+    if (isTauri()) {
+        if (settings.hotkey === undefined || settings.hotkey === null) {
+            settings.hotkey = 'CmdOrControl+Shift+E'
+        }
+        if (settings.displayWindowHotkey === undefined || settings.displayWindowHotkey === null) {
+            settings.displayWindowHotkey = 'CmdOrControl+Shift+D'
+        }
+    }
     return settings
 }
 

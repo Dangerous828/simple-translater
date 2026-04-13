@@ -325,7 +325,16 @@ If you understand, say "yes", and then we will begin.`
     }
 
     if (contentPrompt) {
-        commandPrompt = `Only reply the result and nothing else. ${commandPrompt}:\n\n${contentPrompt.trimEnd()}`
+        // Plain translate: rolePrompt already asks for output-only translation. The generic
+        // "Only reply..." line was being lumped into source text by the Standard (HY-MT) path,
+        // which splits on the first \n\n — the model then "translated" that instruction too.
+        const plainTranslate =
+            query.mode !== 'big-bang' && query.action.mode === 'translate' && !query.writing && !query.selectedWord
+        if (plainTranslate) {
+            commandPrompt = contentPrompt.trimEnd()
+        } else {
+            commandPrompt = `Only reply the result and nothing else. ${commandPrompt}:\n\n${contentPrompt.trimEnd()}`
+        }
     }
 
     const settings = await getSettings()

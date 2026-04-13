@@ -63,6 +63,7 @@ async fn try_detect_cuda_version() -> Option<String> {
 
 /// Prebuilt CUDA wheels (jllllll index). Newer driver reports (e.g. 12.6) fall back to the newest
 /// CUDA tag published here (`cu122`), since pip cannot use a non-existent index.
+#[cfg(any(windows, target_os = "linux"))]
 fn cuda_extra_index_url(version: &str) -> Option<&'static str> {
     if version.starts_with("11.6") {
         return Some("https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cu116");
@@ -389,6 +390,7 @@ async fn ensure_venv_has_pip(app: &tauri::AppHandle, vpy: &std::path::Path) -> R
 /// Install `llama-cpp-python` from prebuilt wheels only (PyPI sdist needs CMake + llama.cpp build).
 /// `package_req` is a pip requirement (e.g. `llama-cpp-python==0.2.26`). Pin the version so pip does
 /// not prefer a newer PyPI sdist over third-party wheels.
+#[cfg(any(windows, target_os = "linux"))]
 async fn install_llama_cpp_via_wheels(
     vpy: &std::path::Path,
     package_req: &str,

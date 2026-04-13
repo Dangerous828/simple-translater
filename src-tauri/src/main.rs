@@ -76,13 +76,19 @@ fn init_tokio_runtime() -> &'static TokioRuntime {
 
 #[cfg(target_os = "macos")]
 fn query_accessibility_permissions() -> bool {
-    let trusted = macos_accessibility_client::accessibility::application_is_trusted_with_prompt();
+    // First do a silent check (no prompt). Only show the system prompt when not yet trusted.
+    extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+    }
+    let trusted = unsafe { AXIsProcessTrusted() };
     if trusted {
         print!("Application is totally trusted!");
-    } else {
-        print!("Application isn't trusted :(");
+        return true;
     }
-    trusted
+    // Not trusted yet — show the macOS accessibility prompt once.
+    let _ = macos_accessibility_client::accessibility::application_is_trusted_with_prompt();
+    print!("Application isn't trusted :(");
+    false
 }
 
 #[cfg(not(target_os = "macos"))]

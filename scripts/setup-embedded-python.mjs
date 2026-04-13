@@ -88,6 +88,49 @@ async function fetchJsonWithFallback(url, headers = {}) {
     }
 }
 
+/** Walk tree: if symlink → absolute path and ./basename exists, replace with relative link. */
+function relativizeBrokenAbsoluteSymlinks(rootDir) {
+    function walk(dir) {
+        let entries
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true })
+        } catch {
+            return
+        }
+        for (const ent of entries) {
+            const p = path.join(dir, ent.name)
+            if (ent.isDirectory()) {
+                walk(p)
+                continue
+            }
+            if (!ent.isSymbolicLink()) {
+                continue
+            }
+            let t
+            try {
+                t = fs.readlinkSync(p)
+            } catch {
+                continue
+            }
+            if (!path.isAbsolute(t)) {
+                continue
+            }
+            const base = path.basename(t)
+            const candidate = path.join(dir, base)
+            if (!fs.existsSync(candidate)) {
+                continue
+            }
+            try {
+                fs.unlinkSync(p)
+                fs.symlinkSync(base, p)
+            } catch (e) {
+                console.warn(`[python] could not relativize ${p}: ${e}`)
+            }
+        }
+    }
+    walk(rootDir)
+}
+
 function platformTriple() {
     const arch = process.arch
     if (process.platform === 'darwin') {
@@ -200,6 +243,13 @@ async function main() {
         const from = path.join(pythonDir, name)
         const to = path.join(outDir, name)
         fs.cpSync(from, to, { recursive: true })
+    }
+
+    // Node/fs.cpSync can preserve symlinks that point at the *extract temp dir*; Tauri then fails.
+    // Unix/macOS/Linux: rewrite those to same-dir relative links. Skip on Windows: standalone layout
+    // uses .exe / launcher files, not bin/python3-style symlinks; symlink creation also needs extra privileges.
+    if (process.platform !== 'win32') {
+        relativizeBrokenAbsoluteSymlinks(outDir)
     }
 
     console.log('[python] done')

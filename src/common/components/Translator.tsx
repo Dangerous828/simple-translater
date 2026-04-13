@@ -17,6 +17,7 @@ import { isTauri } from '../utils'
 import { commands } from '@/tauri/bindings'
 import type { ISettings } from '../types'
 import { useTheme } from '../hooks/useTheme'
+import { useTranslatorStore, setExternalOriginalText } from '../store'
 import { MdArrowBack } from 'react-icons/md'
 
 export interface TranslatorProps {
@@ -44,6 +45,17 @@ export function Translator(props: TranslatorProps) {
     const [showSettings, setShowSettings] = useState(!!props.defaultShowSettings)
 
     const abortRef = useRef<AbortController | null>(null)
+    const needsAutoTranslateRef = useRef(false)
+
+    const externalOriginalText = useTranslatorStore((s) => s.externalOriginalText)
+
+    useEffect(() => {
+        if (externalOriginalText && externalOriginalText.trim()) {
+            setText(externalOriginalText)
+            needsAutoTranslateRef.current = true
+            setExternalOriginalText('')
+        }
+    }, [externalOriginalText])
 
     useEffect(() => {
         if (props.showSettings !== undefined) {
@@ -162,6 +174,13 @@ export function Translator(props: TranslatorProps) {
         abortRef.current = null
         setIsTranslating(false)
     }, [])
+
+    useEffect(() => {
+        if (needsAutoTranslateRef.current) {
+            needsAutoTranslateRef.current = false
+            startTranslate()
+        }
+    }, [text, startTranslate])
 
     const openHistory = useCallback(() => {
         if (!isTauri()) return
