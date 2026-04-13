@@ -36,7 +36,25 @@ export class StandardPython extends AbstractEngine {
         try {
             req.onStatusCode?.(200)
 
-            const prompt = [req.rolePrompt, req.commandPrompt].filter(Boolean).join('\n\n').trim()
+            // HY-MT1.5 model requires a specific prompt format:
+            // Chinese involved: 将以下文本翻译为{target}，注意只需要输出翻译后的结果，不要额外解释：\n{text}
+            // Non-Chinese:      Translate the following segment into {target}, without additional explanation.\n{text}
+            const sourceText = req.sourceText || ''
+            const targetLang = req.targetLang || 'English'
+            const sourceLang = req.sourceLang || ''
+
+            const isChineseInvolved =
+                /chinese|中文|简体|繁體/i.test(targetLang) || /chinese|中文|简体|繁體/i.test(sourceLang)
+
+            let prompt: string
+            if (isChineseInvolved) {
+                prompt = `将以下文本翻译为${targetLang}，注意只需要输出翻译后的结果，不要额外解释：\n${sourceText}`
+            } else {
+                prompt = `Translate the following segment into ${targetLang}, without additional explanation.\n${sourceText}`
+            }
+
+            console.debug('[StandardPython] prompt:', prompt)
+
             const settings = await getSettings()
             const hf = (settings.hfEndpoint ?? '').trim()
             const resp = await invoke<StandardTranslateResponse>('standard_translate', {

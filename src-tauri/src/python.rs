@@ -1,6 +1,7 @@
 use debug_print::debug_println;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::time::Duration;
 use tauri::Manager;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -43,6 +44,8 @@ fn detect_cuda_version_from_nvidia_smi(output: &str) -> Option<String> {
 fn python_cmd(program: &std::path::Path) -> tokio::process::Command {
     let mut c = tokio::process::Command::new(program);
     c.env("PYTHONDONTWRITEBYTECODE", "1");
+    // Force UTF-8 mode on Windows to avoid codec issues with piped stdin/stdout.
+    c.env("PYTHONUTF8", "1");
     c
 }
 
@@ -135,6 +138,7 @@ struct PyDaemon {
     backend: String,
     cuda_available: bool,
     detected_cuda_version: String,
+    stderr_buf: std::sync::Arc<tokio::sync::Mutex<String>>,
 }
 
 static PY_DAEMON: OnceCell<Mutex<Option<PyDaemon>>> = OnceCell::new();
@@ -302,9 +306,14 @@ async fn run_cmd_inherit_stdio(mut cmd: tokio::process::Command) -> Result<(), S
 }
 
 /// True if the venv already has packages required for Standard mode (download + inference).
+/// Also checks that llama-cpp-python is recent enough to handle modern GGUF files.
 async fn venv_standard_deps_ok(vpy: &std::path::Path) -> bool {
     let mut cmd = python_cmd(vpy);
-    cmd.arg("-c").arg("import llama_cpp");
+    cmd.arg("-c").arg(
+        "import llama_cpp; v = llama_cpp.__version__; parts = v.split('.'); \
+         ok = int(parts[0]) > 0 or int(parts[1]) >= 3; \
+         exit(0 if ok else 1)"
+    );
     match cmd.output().await {
         Ok(out) => out.status.success(),
         Err(_) => false,
@@ -453,7 +462,7 @@ async fn install_venv_pip_dependencies(app: &tauri::AppHandle, vpy: &std::path::
         if let Some(cuda_ver) = try_detect_cuda_version().await {
             if let Some(extra) = cuda_extra_index_url(&cuda_ver) {
                 debug_println!(
-                    "[standard] detected CUDA {} -> llama-cpp-python CUDA wheel (extra-index-url={})",
+                    "[standard] detected CUDA {} -> trying llama-cpp-python CUDA wheel (extra-index-url={})",
                     cuda_ver,
                     extra
                 );
@@ -465,14 +474,14 @@ async fn install_venv_pip_dependencies(app: &tauri::AppHandle, vpy: &std::path::
                     .arg("--upgrade")
                     .arg("--prefer-binary")
                     .arg("--force-reinstall")
-                    .arg("llama-cpp-python==0.2.9")
+                    .arg("llama-cpp-python")
                     .arg("--extra-index-url")
                     .arg(extra);
                 match run_cmd_inherit_stdio(cuda_cmd).await {
                     Ok(()) => llama_ok = true,
                     Err(e) => {
                         debug_println!(
-                            "[standard] CUDA llama-cpp-python install failed (will try CPU wheels): {}",
+                            "[standard] CUDA llama-cpp-python install failed (will try PyPI): {}",
                             e
                         );
                     }
@@ -485,33 +494,37 @@ async fn install_venv_pip_dependencies(app: &tauri::AppHandle, vpy: &std::path::
             }
         }
         if !llama_ok {
-            install_llama_cpp_via_wheels(
-                vpy,
-                "llama-cpp-python==0.2.26",
-                "https://jllllll.github.io/llama-cpp-python-cuBLAS-wheels/AVX2/cpu",
-            )
-            .await?;
+            // Install from abetlen's prebuilt CPU wheel index — PyPI only has sdist which needs CMake.
+            debug_println!("[standard] installing llama-cpp-python from prebuilt CPU wheel index");
+            let mut pypi_cmd = python_cmd(vpy);
+            pypi_cmd
+                .arg("-m")
+                .arg("pip")
+                .arg("install")
+                .arg("--upgrade")
+                .arg("--prefer-binary")
+                .arg("llama-cpp-python")
+                .arg("--extra-index-url")
+                .arg("https://abetlen.github.io/llama-cpp-python/whl/cpu");
+            run_cmd_inherit_stdio(pypi_cmd).await?;
         }
     }
 
     #[cfg(target_os = "macos")]
     {
-        #[cfg(target_arch = "aarch64")]
-        {
-            install_llama_cpp_macos_from_release_wheel(
-                vpy,
-                "https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels/releases/download/metal/llama_cpp_python-0.2.26-cp311-cp311-macosx_12_0_arm64.whl",
-            )
-            .await?;
-        }
-        #[cfg(not(target_arch = "aarch64"))]
-        {
-            install_llama_cpp_macos_from_release_wheel(
-                vpy,
-                "https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels/releases/download/metal/llama_cpp_python-0.2.26-cp311-cp311-macosx_12_0_x86_64.whl",
-            )
-            .await?;
-        }
+        // abetlen publishes Metal-enabled wheels for macOS on the same index.
+        debug_println!("[standard] installing llama-cpp-python from prebuilt wheel index (macOS)");
+        let mut pypi_cmd = python_cmd(vpy);
+        pypi_cmd
+            .arg("-m")
+            .arg("pip")
+            .arg("install")
+            .arg("--upgrade")
+            .arg("--prefer-binary")
+            .arg("llama-cpp-python")
+            .arg("--extra-index-url")
+            .arg("https://abetlen.github.io/llama-cpp-python/whl/metal");
+        run_cmd_inherit_stdio(pypi_cmd).await?;
     }
 
     Ok(())
@@ -523,7 +536,16 @@ async fn ensure_daemon(app: &tauri::AppHandle) -> Result<(), String> {
     let models_dir = app_data_dir(app)?.join("models");
     let repo_dir = models_dir.join(DEFAULT_HF_REPO.replace('/', "__"));
     let model_path = repo_dir.join(DEFAULT_GGUF_FILENAME);
-    let model_path_str = model_path.display().to_string();
+    // On Windows, canonicalize may produce \\?\ extended-length paths.
+    // Use display() but strip the prefix so Python / llama.cpp get a normal path.
+    let model_path_str = {
+        let s = model_path.display().to_string();
+        if s.starts_with("\\\\?\\") {
+            s[4..].to_string()
+        } else {
+            s
+        }
+    };
 
     let mut guard = mutex.lock().await;
     if let Some(d) = guard.as_ref() {
@@ -578,7 +600,7 @@ async fn ensure_daemon(app: &tauri::AppHandle) -> Result<(), String> {
         .env("STD_CTX", ctx.to_string())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit());
+        .stderr(std::process::Stdio::piped());
 
     let mut child = cmd.spawn().map_err(|e| format!("failed to spawn python daemon: {}", e))?;
     let stdin = child
@@ -589,6 +611,38 @@ async fn ensure_daemon(app: &tauri::AppHandle) -> Result<(), String> {
         .stdout
         .take()
         .ok_or_else(|| "failed to open daemon stdout".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "failed to open daemon stderr".to_string())?;
+
+    // Spawn a background task to collect stderr so we can surface errors to the user.
+    let stderr_buf: std::sync::Arc<tokio::sync::Mutex<String>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
+    {
+        let buf = stderr_buf.clone();
+        let mut reader = BufReader::new(stderr);
+        tokio::spawn(async move {
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line).await {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        eprint!("[py-daemon] {}", line);
+                        let mut b = buf.lock().await;
+                        // Keep last 2KB of stderr for error reporting
+                        if b.len() > 2048 {
+                            let drain = b.len() - 1024;
+                            b.drain(..drain);
+                        }
+                        b.push_str(&line);
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+    }
 
     *guard = Some(PyDaemon {
         child,
@@ -602,6 +656,7 @@ async fn ensure_daemon(app: &tauri::AppHandle) -> Result<(), String> {
         backend,
         cuda_available,
         detected_cuda_version,
+        stderr_buf: stderr_buf,
     });
 
     Ok(())
@@ -636,7 +691,18 @@ async fn daemon_translate(app: &tauri::AppHandle, prompt: &str) -> Result<String
         .await
         .map_err(|e| format!("failed to read daemon stdout: {}", e))?;
     if n == 0 {
-        return Err("python daemon exited unexpectedly".to_string());
+        // Daemon exited — collect stderr for a useful error message
+        // Give stderr reader a moment to flush
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let stderr_content = d.stderr_buf.lock().await.clone();
+        let detail = if stderr_content.trim().is_empty() {
+            String::new()
+        } else {
+            format!("\n\nPython stderr:\n{}", stderr_content.trim())
+        };
+        // Clear the dead daemon so next call will try to restart
+        *guard = None;
+        return Err(format!("python daemon exited unexpectedly{}", detail));
     }
     let parsed: serde_json::Value =
         serde_json::from_str(&out_line).map_err(|e| format!("invalid daemon output: {} raw={}", e, out_line))?;

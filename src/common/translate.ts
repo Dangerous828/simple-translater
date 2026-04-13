@@ -2,7 +2,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getLangConfig, getLangName, LangCode } from '../common/lang'
 import { Action } from './internal-services/db'
-import { codeBlock, oneLine, oneLineTrim } from 'common-tags'
+import { codeBlock, oneLine } from 'common-tags'
 import { getEngine } from './engines'
 import { getSettings } from './utils'
 
@@ -244,12 +244,24 @@ export async function translate(query: TranslateQuery) {
                 }
                 break
             case 'translate':
-                // Minimal desktop build: always output pure translation only.
-                // No dictionary-mode, examples, etymology, or extra explanation.
-                rolePrompt = oneLineTrim`
-                You are a professional translation engine.
-                Translate the given text from ${sourceLangName} to ${targetLangName}.
-                Output ONLY the translated text, no explanation, no extra formatting.`
+                // HY-MT1.5 model prompt format is handled below (after provider detection).
+                // For other providers, use generic translation prompt.
+                {
+                    const isChineseInvolved =
+                        sourceLangName.toLowerCase().includes('chinese') ||
+                        targetLangName.toLowerCase().includes('chinese') ||
+                        sourceLangName === '中文' ||
+                        targetLangName === '中文' ||
+                        sourceLangName.includes('简体') ||
+                        targetLangName.includes('简体') ||
+                        sourceLangName.includes('繁體') ||
+                        targetLangName.includes('繁體')
+                    if (isChineseInvolved) {
+                        rolePrompt = `将以下文本翻译为${targetLangName}，注意只需要输出翻译后的结果，不要额外解释：`
+                    } else {
+                        rolePrompt = `Translate the following segment into ${targetLangName}, without additional explanation.`
+                    }
+                }
                 commandPrompt = ''
                 contentPrompt = query.text
                 if (!query.writing && query.selectedWord) {
@@ -320,6 +332,7 @@ If you understand, say "yes", and then we will begin.`
 
     // Use per-action provider/model if configured, otherwise fall back to global settings
     const effectiveProvider = (query.mode !== 'big-bang' && query.action?.provider) || settings.provider
+
     const effectiveModel = query.mode !== 'big-bang' ? query.action?.apiModel : undefined
     console.debug('[translate] dispatch', {
         mode: query.mode,
@@ -333,6 +346,11 @@ If you understand, say "yes", and then we will begin.`
         rolePrompt,
         commandPrompt,
         modelOverride: effectiveModel,
+        sourceText: query.text,
+        ...(query.mode !== 'big-bang' && {
+            sourceLang: getLangName(query.detectFrom),
+            targetLang: getLangName(query.detectTo),
+        }),
         onMessage: async (message) => {
             await query.onMessage({ ...message, isWordMode })
         },

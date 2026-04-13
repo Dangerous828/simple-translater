@@ -318,6 +318,7 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
         null
     )
     const [stdStatusRefreshing, setStdStatusRefreshing] = useState(false)
+    const stdStatusRefreshingRef = useRef(false)
     const [stdRuntimeInfo, setStdRuntimeInfo] = useState<{
         daemonRunning: boolean
         threads: number
@@ -325,10 +326,12 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
         batch: number
         ctx: number
     } | null>(null)
+    const [stdDownloadLog, setStdDownloadLog] = useState<string>('')
 
     const refreshStdStatus = useCallback(
         async ({ silent = false }: { silent?: boolean } = {}) => {
-            if (stdStatusRefreshing) return
+            if (stdStatusRefreshingRef.current) return
+            stdStatusRefreshingRef.current = true
             setStdStatusRefreshing(true)
             const toastId = 'std-status-refresh'
             if (!silent) {
@@ -355,10 +358,11 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
                     toast.error(`刷新失败：${msg}`, { id: toastId })
                 }
             } finally {
+                stdStatusRefreshingRef.current = false
                 setStdStatusRefreshing(false)
             }
         },
-        [stdStatusRefreshing]
+        [] // stable reference — no state deps
     )
 
     const refreshStdRuntimeInfo = useCallback(async () => {
@@ -404,7 +408,8 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
         return () => {
             mounted = false
         }
-    }, [refreshStdRuntimeInfo, refreshStdStatus])
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
 
     const themeValue: Value = useMemo(() => {
         const id = (draft.themeType ?? 'followTheSystem') as ThemeType
@@ -442,10 +447,20 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
         setStdPreparing(true)
         setStdStepSafe('creatingVenv')
         setStdProgress(0)
+        setStdDownloadLog('')
         if (stdProgressTimerRef.current) {
             window.clearInterval(stdProgressTimerRef.current)
             stdProgressTimerRef.current = null
         }
+        // Listen for detailed download log messages from the Rust backend
+        const unlistenLogHolder: { fn: (() => void) | null } = { fn: null }
+        listen<{ message: string }>('standard-model-download-log', (ev) => {
+            setStdDownloadLog(ev.payload.message)
+        })
+            .then((fn_) => {
+                unlistenLogHolder.fn = fn_
+            })
+            .catch(console.error)
         stdProgressTimerRef.current = window.setInterval(() => {
             setStdProgress((p) => {
                 const step = stdStepRef.current
@@ -510,6 +525,9 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
             if (stdProgressTimerRef.current) {
                 window.clearInterval(stdProgressTimerRef.current)
                 stdProgressTimerRef.current = null
+            }
+            if (unlistenLogHolder.fn) {
+                unlistenLogHolder.fn()
             }
             window.setTimeout(() => {
                 setStdStepSafe('idle')
@@ -744,6 +762,23 @@ export function InnerSettings({ showFooter, onSave, onBack }: InnerSettingsProps
                                     <div style={{ marginTop: 6 }}>
                                         pip 日志在<strong>启动本应用的终端</strong>；模型下载使用上方「Hugging Face
                                         下载地址」或官方站点，进度条随已下载字节更新。
+                                    </div>
+                                ) : null}
+                                {stdDownloadLog ? (
+                                    <div
+                                        style={{
+                                            marginTop: 8,
+                                            padding: '6px 10px',
+                                            borderRadius: 8,
+                                            background: 'rgba(128,128,128,0.1)',
+                                            fontFamily: 'monospace',
+                                            fontSize: 11,
+                                            lineHeight: 1.5,
+                                            wordBreak: 'break-all',
+                                            whiteSpace: 'pre-wrap',
+                                        }}
+                                    >
+                                        {stdDownloadLog}
                                     </div>
                                 ) : null}
                             </div>

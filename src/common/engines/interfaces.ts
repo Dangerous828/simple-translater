@@ -14,6 +14,12 @@ export interface IMessageRequest {
     commandPrompt: string
     modelOverride?: string
     thinkingBudget?: number
+    /** Raw source text for local translation engines (avoids prompt parsing). */
+    sourceText?: string
+    /** Target language name for local translation engines (e.g. "简体中文", "English"). */
+    targetLang?: string
+    /** Source language name for local translation engines (e.g. "English", "简体中文"). */
+    sourceLang?: string
     onMessage: (message: { content: string; role: string; isFullText?: boolean }) => Promise<void>
     onError: (error: string) => void
     onFinished: (reason: string) => void
