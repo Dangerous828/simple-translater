@@ -10,6 +10,8 @@
 Install dependencies with `pnpm install` (pinned in `package.json`).
 - `pnpm dev-tauri` boots the desktop shell with Tauri devtools.
 - `pnpm build-tauri` produces distributable bundles; use `pnpm clean` to reset `dist/` before packaging.
+- `pnpm setup-python-runtime` downloads and installs the embedded Python runtime for Standard mode.
+- `pnpm setup-nsis` copies pre-bundled NSIS/WiX tools to the Tauri cache (required on Windows before first build if network is restricted).
 - `pnpm test` runs Vitest suites.
 - `pnpm lint`, `pnpm lint:fix`, and `pnpm format` keep ESLint and Prettier satisfied across TS/JS/CSS/MD files.
 

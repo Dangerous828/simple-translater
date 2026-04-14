@@ -57,6 +57,7 @@ pnpm build-tauri
 ```bash
 pnpm install
 pnpm setup-python-runtime
+pnpm setup-nsis          # 将预置的 NSIS/WiX 工具复制到 Tauri 缓存，避免构建时下载
 pnpm build-tauri
 ```
 
@@ -64,6 +65,14 @@ pnpm build-tauri
 
 -   NSIS installer is usually generated under:
     -   `src-tauri/target/release/bundle/nsis/`
+
+### Troubleshooting (Windows build)
+
+-   **NSIS/WiX 下载失败（SSL 错误）**：
+    -   项目已预置 NSIS 和 WiX 工具在 `src-tauri/bundler-tools/`，运行 `pnpm setup-nsis` 即可。
+    -   该命令会将工具复制到 `%LOCALAPPDATA%/tauri/`，Tauri 构建时会直接使用，不再下载。
+-   **Python runtime 下载失败（SSL 错误）**：
+    -   设置环境变量后重试：`set CURL_INSECURE=1` 然后 `pnpm setup-python-runtime`
 
 ### Troubleshooting (end-users)
 

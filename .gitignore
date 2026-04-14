@@ -21,3 +21,6 @@ npm-error.log
 # Embedded Python stdlib: bytecode triggers `tauri dev` rebuild loops if written here
 src-tauri/resources/py/**/__pycache__/
 src-tauri/resources/py/**/*.pyc
+
+# Pre-downloaded NSIS/WiX bundler tools for offline Windows builds
+src-tauri/bundler-tools/

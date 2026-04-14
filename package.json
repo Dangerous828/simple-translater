@@ -7,6 +7,8 @@
     "scripts": {
         "prepare": "simple-git-hooks",
         "setup-python-runtime": "node scripts/setup-embedded-python.mjs",
+        "setup-nsis": "node scripts/setup-win-bundler-tools.mjs restore",
+        "save-bundler-tools": "node scripts/setup-win-bundler-tools.mjs save",
         "build-tauri-renderer": "tsc && vite build -c vite.config.tauri.ts",
         "dev-tauri-renderer": "vite -c vite.config.tauri.ts --force",
         "dev-tauri": "cross-env CI=false TAURI_CI=false tauri dev",
