@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
 import { render, act } from '@testing-library/react'
+// @ts-expect-error fast-check may not be installed
 import fc from 'fast-check'
 
 // --- Mocks (same pattern as minimal.test.tsx) ---
@@ -91,9 +92,9 @@ describe('Bug Condition: externalOriginalText sync to Translator textarea', () =
             fc.property(
                 fc
                     .string({ minLength: 1 })
-                    .map((s) => s.trim())
-                    .filter((s) => s.length > 0),
-                (text) => {
+                    .map((s: string) => s.trim())
+                    .filter((s: string) => s.length > 0),
+                (text: string) => {
                     // Set external text in store BEFORE render
                     act(() => {
                         setExternalOriginalText(text)
