@@ -391,6 +391,7 @@ async fn ensure_venv_has_pip(app: &tauri::AppHandle, vpy: &std::path::Path) -> R
 /// `package_req` is a pip requirement (e.g. `llama-cpp-python==0.2.26`). Pin the version so pip does
 /// not prefer a newer PyPI sdist over third-party wheels.
 #[cfg(any(windows, target_os = "linux"))]
+#[allow(dead_code)]
 async fn install_llama_cpp_via_wheels(
     vpy: &std::path::Path,
     package_req: &str,
@@ -414,6 +415,7 @@ async fn install_llama_cpp_via_wheels(
 }
 
 /// macOS: abetlen’s GitHub Pages wheel index is gone; jllllll publishes Metal wheels as release assets.
+#[allow(dead_code)]
 async fn install_llama_cpp_macos_from_release_wheel(vpy: &std::path::Path, wheel_url: &str) -> Result<(), String> {
     debug_println!(
         "[standard] installing llama-cpp-python from prebuilt wheel ({})",
@@ -481,10 +483,10 @@ async fn install_venv_pip_dependencies(app: &tauri::AppHandle, vpy: &std::path::
                     .arg(extra);
                 match run_cmd_inherit_stdio(cuda_cmd).await {
                     Ok(()) => llama_ok = true,
-                    Err(e) => {
+                    Err(_e) => {
                         debug_println!(
                             "[standard] CUDA llama-cpp-python install failed (will try PyPI): {}",
-                            e
+                            _e
                         );
                     }
                 }

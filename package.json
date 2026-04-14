@@ -10,7 +10,7 @@
         "build-tauri-renderer": "tsc && vite build -c vite.config.tauri.ts",
         "dev-tauri-renderer": "vite -c vite.config.tauri.ts --force",
         "dev-tauri": "cross-env CI=false TAURI_CI=false tauri dev",
-        "build-tauri": "npm run build-tauri-renderer && cross-env CI=false TAURI_CI=false tauri build --no-bundle",
+        "build-tauri": "npm run build-tauri-renderer && cross-env CI=false TAURI_CI=false tauri build --bundles nsis",
         "clean": "make clean",
         "test": "vitest test",
         "lint": "eslint \"src/**/*.{ts,tsx}\" --cache",
