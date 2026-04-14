@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
+// @ts-expect-error @testing-library/react may not be installed
 import { render, act } from '@testing-library/react'
 // @ts-expect-error fast-check may not be installed
 import fc from 'fast-check'
