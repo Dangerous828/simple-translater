@@ -26,7 +26,16 @@ function curlText(url, headers = {}) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simple-translater-curl-'))
     const outPath = path.join(tmpDir, 'out.txt')
 
-    const args = ['-fsSL', '--retry', '3', '--retry-delay', '1', '-o', outPath]
+    const args = ['-fsSL', '--retry', '3', '--retry-delay', '1']
+    // On some corporate networks, HTTPS interception causes SSL errors (SEC_E_WRONG_PRINCIPAL).
+    // Fall back to --ssl-no-revoke first; if CURL_INSECURE env is set, also use --insecure.
+    if (process.platform === 'win32') {
+        args.push('--ssl-no-revoke')
+    }
+    if (process.env.CURL_INSECURE === '1') {
+        args.push('--insecure')
+    }
+    args.push('-o', outPath)
     for (const [k, v] of Object.entries(headers)) {
         args.push('-H', `${k}: ${v}`)
     }
@@ -68,6 +77,8 @@ function curlText(url, headers = {}) {
 }
 
 async function fetchTextWithFallback(url, headers = {}) {
+    // On Windows with corporate proxies, Node fetch may also fail on SSL.
+    // Set NODE_TLS_REJECT_UNAUTHORIZED=0 via CURL_INSECURE=1 env as escape hatch.
     try {
         const r = await fetch(url, { headers })
         if (!r.ok) throw new Error(`http ${r.status}`)
@@ -212,7 +223,14 @@ async function main() {
     fs.mkdirSync(extractDir, { recursive: true })
 
     console.log(`[python] download ${chosen.name}`)
-    run('curl', ['-L', chosen.url, '-o', archivePath])
+    const dlArgs = ['-L', chosen.url, '-o', archivePath]
+    if (process.platform === 'win32') {
+        dlArgs.unshift('--ssl-no-revoke')
+    }
+    if (process.env.CURL_INSECURE === '1') {
+        dlArgs.unshift('--insecure')
+    }
+    run('curl', dlArgs)
 
     if (archivePath.endsWith('.tar.gz')) {
         console.log('[python] extract (.tar.gz)')
