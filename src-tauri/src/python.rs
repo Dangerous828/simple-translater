@@ -49,7 +49,6 @@ fn python_cmd(program: &std::path::Path) -> tokio::process::Command {
     // Hide console window on Windows so Python processes run silently.
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         c.creation_flags(CREATE_NO_WINDOW);
     }
